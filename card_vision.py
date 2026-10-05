@@ -1,14 +1,8 @@
 #!/usr/bin/env python3
-"""Card-face computer vision for Pinco / similar HTML poker tables.
+"""Чтение карт со скриншота стола Pinco.
 
-OCR cannot read the table's stylized rank glyphs. This module:
-  1. finds the white card face inside a tight bounding box
-  2. splits ink into rank (top) + suit (below)
-  3. reads rank by template match (real crops + system fonts) + hole count
-  4. reads suit by ink color + width profile (heart/diamond/spade/club)
-
-Used by vision_assistant.py. Run self-test:
-  python3 card_vision.py --selftest
+Ранг — по шаблону и числу дырок в глифе, масть — по цвету и профилю.
+Проверка: python card_vision.py --selftest
 """
 from __future__ import annotations
 
@@ -25,7 +19,7 @@ RANK_TPL_DIR = BASE / 'card_templates' / 'ranks'
 CARD_TPL_DIR = BASE / 'card_templates' / 'cards'
 
 RANKS = ['A', 'K', 'Q', 'J', 'T', '9', '8', '7', '6', '5', '4', '3', '2']
-# How many interior holes each rank glyph typically has
+# Сколько дырок внутри глифа.
 RANK_HOLES = {
     'A': (0, 1), 'K': (0,), 'Q': (0, 1), 'J': (0,), 'T': (0, 1),
     '9': (1,), '8': (2,), '7': (0,), '6': (1,), '5': (0,),
@@ -35,17 +29,10 @@ RANK_HOLES = {
 SEED_CARDS = (
     (BASE / 'card_samples' / 'card_0_raw_459_525.png', '6', 'd'),
     (BASE / 'card_samples' / 'card_1_raw_509_524.png', 'J', 'c'),
-    (BASE / 'poker_bot' / 'card_0.png', '3', 's'),
-    (BASE / 'poker_bot' / 'card_1.png', 'K', 'd'),
-    (BASE / 'poker_bot' / 'card_2.png', '4', 'h'),
-    (BASE / 'poker_bot' / 'card_3.png', '6', 'h'),
-    (BASE / 'poker_bot' / 'card_4.png', '2', 'h'),
 )
 
 FONT_PATHS = [
-    # Windows: сначала пробуем через переменные окружения, потом по типовым путям.
-    # Без этих строк на Windows не находится НИ ОДНОГО шрифта, и ранги, для которых
-    # нет файла-шаблона (A, Q, 9, 8), прочитать нечем.
+    # Запас, если кропа ранга нет в card_templates/ranks (сейчас нет только Q).
     str(Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts' / 'arialbd.ttf'),
     str(Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts' / 'segoeuib.ttf'),
     str(Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts' / 'calibrib.ttf'),

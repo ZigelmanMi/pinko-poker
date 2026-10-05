@@ -14,10 +14,8 @@ param(
 $ErrorActionPreference = 'Stop'
 Set-Location -Path $PSScriptRoot
 
-# ВАЖНО: Python по умолчанию создаёт рядом с исходниками папку __pycache__.
-# Chrome отказывается загружать распакованное расширение, если в папке есть
-# файлы или папки, начинающиеся с «_»: «Filenames starting with "_" are
-# reserved for use by the system». Поэтому кэш байт-кода отключаем.
+# Без этого Python пишет __pycache__, и Chrome не грузит расширение:
+# имена на «_» в папке расширения запрещены.
 $env:PYTHONDONTWRITEBYTECODE = '1'
 $env:PYTHONIOENCODING = 'utf-8'
 

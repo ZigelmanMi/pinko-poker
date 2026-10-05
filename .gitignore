@@ -1,5 +1,7 @@
 secrets.js
 .venv/
+card_samples/
+poker_bot/
 extension/
 __pycache__/
 *.pyc

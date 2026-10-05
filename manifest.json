@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Poker Assistant",
+  "name": "pin-pok",
   "version": "3.5.0",
-  "description": "Локальный разбор руки: зрение карт, диапазоны и Монте-Карло",
+  "description": "Подсказки к Hold'em: карты, диапазоны и эквити",
   "permissions": [
     "activeTab",
     "tabs",
@@ -23,7 +23,7 @@
       "48": "icons/icon48.png",
       "128": "icons/icon128.png"
     },
-    "default_title": "Poker Assistant — открыть виджет"
+    "default_title": "pin-pok — открыть виджет"
   },
   "content_scripts": [
     {

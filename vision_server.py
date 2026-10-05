@@ -1,19 +1,13 @@
 #!/usr/bin/env python3
-"""Local card-vision HTTP server for the Chrome extension.
+"""Локальный сервер чтения карт для расширения.
 
-  python3 vision_server.py
+  python vision_server.py
 
-Listens on http://127.0.0.1:8765
+http://127.0.0.1:8765
   GET  /health
   POST /read   JSON { "image": "data:image/png;base64,..." }
 
-Безопасность:
-  * принимаются только запросы с допустимым Origin (расширение Chrome или
-    localhost). Раньше стоял Access-Control-Allow-Origin: '*', из-за чего
-    любая открытая вкладка могла слать изображения на этот сервер;
-  * тело запроса ограничено по размеру, иначе одна вкладка может отправить
-    гигабайты и уронить процесс по памяти;
-  * простейший лимит частоты, чтобы сервер не молотил один и тот же кадр.
+Чужой Origin не принимается, тело запроса ограничено, запросы реже 0.4 с отсекаются.
 """
 from __future__ import annotations
 

@@ -1,4 +1,4 @@
-// Content script for the poker GAME iframe only (pu-web2.e5t.online)
+// Скрипт внутри iframe стола.
 (function () {
   'use strict';
   if (window.__pokerAssistantInitialized) return;

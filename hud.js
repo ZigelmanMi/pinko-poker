@@ -33,28 +33,21 @@
     var stackTxt = state.heroStack != null && Number(state.heroStack) > 0
       ? '$' + Number(state.heroStack).toFixed(2) : '—';
     var nameTxt = state.heroName ? ' (' + state.heroName + ')' : '';
+    var source = state._raw && state._raw.source ? state._raw.source : '';
     live.innerHTML =
-      '<div class="pa-state-title">📡 Прочитано из игры</div>' +
-      '<div class="pa-state-row">🂡 Мои карты: <b>' + formatCards(state.myCards) + '</b></div>' +
-      '<div class="pa-state-row">🃏 Доска: <b>' + formatCards(state.communityCards) + '</b></div>' +
-      '<div class="pa-state-row">💰 Банк: <b>$' + Number(state.pot || 0).toFixed(2) +
+      '<div class="pa-state-title">Со стола</div>' +
+      '<div class="pa-state-row">Карты: <b>' + formatCards(state.myCards) + '</b></div>' +
+      '<div class="pa-state-row">Доска: <b>' + formatCards(state.communityCards) + '</b></div>' +
+      '<div class="pa-state-row">Банк: <b>$' + Number(state.pot || 0).toFixed(2) +
       '</b> · Ставка: <b>$' + Number(state.betToCall || 0).toFixed(2) + '</b></div>' +
-      '<div class="pa-state-row">👛 Стек' + nameTxt + ': <b>' + stackTxt + '</b></div>' +
-      '<div class="pa-state-row">👥 В игре: <b>' + (state.numPlayers || '—') +
+      '<div class="pa-state-row">Стек' + nameTxt + ': <b>' + stackTxt + '</b></div>' +
+      '<div class="pa-state-row">В игре: <b>' + (state.numPlayers || '—') +
       '</b>' + (state.numSeated && state.numSeated !== state.numPlayers ? ' · за столом: ' + state.numSeated : '') +
       ' · Улица: <b>' + (state.stage || extra.street || '?') + '</b>' +
-      (state._raw && state._raw.source ? ' · src: ' + state._raw.source : '') +
-      (state._raw && state._raw.shotBoxes != null ? ' · boxes: ' + state._raw.shotBoxes : '') +
-      (state._raw && state._raw.shotReads != null ? ' · reads: ' + state._raw.shotReads : '') +
-      (state._raw && state._raw.shotStats
-        ? ' · <span title="bridgeSkips — кадры не снимались, cacheHits — кадр не отправлялся повторно">' +
-          '📷 скриншотов: ' + state._raw.shotStats.captures +
-          ', из кэша: ' + state._raw.shotStats.cacheHits +
-          ', без съёмки: ' + state._raw.shotStats.bridgeSkips + '</span>'
-        : '') +
+      (source ? ' · ' + source : '') +
       '</div>' +
-      (extra.warning ? '<div class="pa-warning">⚠️ ' + extra.warning + '</div>' : '') +
-      '<div class="pa-hint">Окно можно перетащить с стола — на край экрана или второй монитор.</div>';
+      (extra.warning ? '<div class="pa-warning">' + extra.warning + '</div>' : '') +
+      '<div class="pa-hint">Окно можно убрать со стола: на край экрана или второй монитор.</div>';
   }
 
   function renderDecision(response) {

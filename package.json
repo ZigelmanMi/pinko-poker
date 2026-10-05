@@ -2,7 +2,7 @@
   "name": "pin-pok",
   "version": "3.5.0",
   "private": true,
-  "description": "Poker assistant extension: local Python card vision, position ranges and Monte Carlo",
+  "description": "Подсказки к Hold'em на Pinco: локальное чтение карт, диапазоны и эквити",
   "scripts": {
     "check": "node tools/check-syntax.js",
     "test": "node tools/run-tests.js",

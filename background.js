@@ -1,6 +1,4 @@
-// Background service worker
-// Handles poker solver logic and communication with content script
-// iframe injection is handled by content.js via direct DOM access
+// Service worker: разбор руки и связь со страницей.
 
 // Порядок важен: hand_eval → monte_carlo → ranges, потому что оба модуля
 // диапазонов опционально используют симулятор и оценщик.
@@ -12,7 +10,6 @@ importScripts(
   'frame_diff.js'
 );
 
-// Hand counter for unique hand IDs
 let handCounter = 0;
 // Кэш последнего распознавания: снимок + его dhash + результат зрения.
 // Если картинка стола не изменилась, повторно ничего не отправляем.
@@ -592,8 +589,7 @@ function detectPositions(handState) {
 }
 
 /**
- * Префлоп-решение по диапазонам позиций (preflop_ranges.js).
- * Возвращает null, если модуль недоступен — тогда решение идёт через LLM.
+ * Префлоп по чартам позиции. null, если модуль недоступен.
  */
 function buildPreflopRangeDecision(handState) {
   if (typeof PreflopRanges === 'undefined' || !PreflopRanges || !PreflopRanges.getAction) return null;
@@ -660,13 +656,7 @@ function buildPreflopRangeDecision(handState) {
 }
 
 /**
- * Compute real equity:
- *  - Preflop: Монте-Карло против N случайных рук.
- *      Раньше здесь бралось значение из PREFLOP_GTO — это таблица all-in
- *      эквити конкретных рук, а не частоты. Монте-Карло на новом оценщике
- *      считается за единицы миллисекунд и даёт честную цифру для любой руки,
- *      включая те, которых в таблице нет.
- *  - Postflop: Монте-Карло против N случайных рук.
+ * Эквити Монте-Карло. На постфлопе — против диапазона, если он посчитался.
  */
 function computeEquity(handState) {
   const hole = (handState.myCards || []).filter(c => c && c.rank).slice(0, 2);
@@ -920,4 +910,4 @@ function buildFallbackDecision(handState) {
   };
 }
 
-console.log('Poker Assistant: Background loaded with префлоп-диапазоны + постфлоп-диапазоны + Monte Carlo');
+console.log('pin-pok: фоновый скрипт загружен');

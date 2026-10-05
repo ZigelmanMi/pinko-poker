@@ -1,19 +1,11 @@
-// PAGE world. Cards are Pixi/WebGL — not in the DOM.
-// v3: pin game state (React/Pixi/WS) + read white card faces from the canvas.
+// Контекст страницы: состояние игры и белые рубашки с canvas.
 (function () {
   if (window.__paBridgeV >= 4) return;
 
-  // Работаем только на домене казино: этот скрипт подменяет глобальные
-  // объекты страницы, и на посторонних сайтах ему делать нечего.
   if (!/e5t\.online/i.test(location.hostname)) return;
 
   window.__paBridgeV = 4;
   window.__paBridge = true;
-
-  // Раньше здесь принудительно включался preserveDrawingBuffer: true для всех
-  // WebGL-контекстов страницы. Это заставляет драйвер хранить каждый кадр
-  // (заметная просадка FPS) и легко детектируется. Кадр читается прямо в
-  // колбэке requestAnimationFrame, поэтому флаг не нужен — убран.
 
   var RANK_NUM = { 1: 'A', 11: 'J', 12: 'Q', 13: 'K', 14: 'A', 10: 'T' };
   var RANKS = '23456789TJQKA';

@@ -1,4 +1,4 @@
-/* Poker Assistant Overlay Styles */
+/* Окно подсказки. */
 #poker-assistant-overlay,
 #poker-assistant-panel {
   position: fixed;
@@ -241,7 +241,6 @@
   transform: scale(1.1);
 }
 
-/* ===== Poker Assistant v3.2 ===== */
 
 .pa-state {
   background: rgba(255, 255, 255, 0.06);

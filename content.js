@@ -1,12 +1,9 @@
-// Runs on every site. Activates only when a poker iframe/table is present.
+// Верхняя страница казино. Ищет iframe стола.
 (function () {
   'use strict';
   if (window !== window.top) return;
   if (window.__pokerAssistantMainInit) return;
 
-  // Работаем только на домене казино. Раньше скрипт висел на каждом сайте
-  // и на любой странице с подходящим словом в iframe начинал снимать
-  // скриншот вкладки и отправлять его на локальный сервер зрения.
   if (!/e5t\.online/i.test(location.hostname)) return;
 
   window.__pokerAssistantMainInit = true;

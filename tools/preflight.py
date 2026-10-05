@@ -1,17 +1,9 @@
 #!/usr/bin/env python3
-"""Проверка, что папку можно загрузить в Chrome как распакованное расширение.
+"""Проверка, что папку можно загрузить в Chrome.
+
+Chrome не грузит расширение, если в папке есть имя на «_» (обычно __pycache__).
 
   python tools/preflight.py
-
-Зачем: Chrome отказывается загружать расширение, если в папке есть файлы или
-папки, имена которых начинаются с «_». Типичный виновник — `__pycache__`,
-который Python создаёт при запуске сервера зрения. Ошибка выглядит так:
-
-  Cannot load extension with file or directory name __pycache__.
-  Filenames starting with "_" are reserved for use by the system.
-
-Этот скрипт ловит проблему ДО попытки загрузки. Запускать после любого запуска
-Python-скриптов в папке проекта. Ненулевой код возврата = Chrome не загрузит.
 """
 from __future__ import annotations
 

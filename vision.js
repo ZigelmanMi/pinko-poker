@@ -1,4 +1,4 @@
-// Screenshot / ImageData card reader (Pinco white faces).
+// Чтение белых рубашек из кадра.
 (function () {
   'use strict';
   if (window.PokerVision) return;
