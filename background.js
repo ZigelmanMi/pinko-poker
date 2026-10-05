@@ -910,4 +910,30 @@ function buildFallbackDecision(handState) {
   };
 }
 
+function rememberPack(build) {
+  if (!build || !chrome.storage || !chrome.storage.local || !chrome.runtime || !chrome.runtime.reload) return;
+  chrome.storage.local.get('pack').then((stored) => {
+    if (stored && stored.pack === build) return;
+    return chrome.storage.local.set({ pack: build }).then(() => chrome.runtime.reload());
+  }).catch(() => {});
+}
+
+function watchPack() {
+  if (typeof fetch !== 'function') return;
+  fetch('http://127.0.0.1:8765/health').then((res) => {
+    if (!res.ok) throw new Error('health');
+    return res.json();
+  }).then((data) => {
+    if (data && data.ok) rememberPack(data.build || '');
+  }).catch(() => {});
+}
+
+watchPack();
+if (chrome.alarms && chrome.alarms.create && chrome.alarms.onAlarm) {
+  chrome.alarms.create('pinpok-pack', { periodInMinutes: 1 });
+  chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm && alarm.name === 'pinpok-pack') watchPack();
+  });
+}
+
 console.log('pin-pok: фоновый скрипт загружен');

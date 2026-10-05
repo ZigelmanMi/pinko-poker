@@ -19,6 +19,7 @@ import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from PIL import Image
 
@@ -41,6 +42,14 @@ ALLOWED_ORIGIN_RE = re.compile(
 
 _last_request_at = 0.0
 _rate_lock = threading.Lock()
+
+
+def pack_stamp() -> str:
+    path = Path(__file__).parent / '.pack-stamp'
+    try:
+        return path.read_text(encoding='utf-8').strip()
+    except OSError:
+        return ''
 
 
 def decode_image(data_url: str) -> Image.Image:
@@ -141,7 +150,7 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        self._send_json(200, {'ok': True, 'engine': 'card_vision'})
+        self._send_json(200, {'ok': True, 'engine': 'card_vision', 'build': pack_stamp()})
 
     def do_POST(self) -> None:
         if self.path.split('?', 1)[0] != '/read':

@@ -8,6 +8,7 @@ Python, тесты и __pycache__ в неё не попадают. Chrome гру
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import shutil
 import sys
@@ -69,6 +70,12 @@ def main() -> int:
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copy2(src, target)
         copied.append(name)
+
+    digest = hashlib.sha256()
+    for name in copied:
+        digest.update(name.encode('utf-8'))
+        digest.update((DEST / name).read_bytes())
+    (ROOT / '.pack-stamp').write_text(digest.hexdigest()[:12], encoding='utf-8')
 
     print('Собрано файлов: %d' % len(copied))
     print(DEST)

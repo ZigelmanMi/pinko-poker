@@ -1,12 +1,6 @@
-# start.ps1 — один запуск pin-pok на Windows.
-#
-#   .\start.ps1
-#   двойной щелчок по start.bat
-#
-# Делает три вещи:
-#   1. Создаёт .venv и ставит зависимости, если их ещё нет.
-#   2. Собирает чистую папку extension\ и открывает chrome://extensions.
-#   3. Поднимает сервер зрения. Окно не закрывать: это и есть сервер.
+# start.ps1 — запуск pin-pok.
+# Сервер зрения уходит в фон, окно консоли закрывается.
+# Страница расширений открывается только в первый раз.
 
 param(
   [switch]$NoBrowser
@@ -19,6 +13,8 @@ $env:PYTHONDONTWRITEBYTECODE = '1'
 $env:PYTHONIOENCODING = 'utf-8'
 $env:PYTHONPYCACHEPREFIX = Join-Path $env:TEMP 'pin-pok-pyc'
 
+$ReadyFlag = Join-Path $PSScriptRoot '.pin-pok-ready'
+
 function Find-SystemPython {
   foreach ($candidate in @('py', 'python', 'python3')) {
     $cmd = Get-Command $candidate -ErrorAction SilentlyContinue
@@ -27,25 +23,49 @@ function Find-SystemPython {
   return $null
 }
 
-function Open-ExtensionsPage {
-  if ($NoBrowser) { return }
+function Find-Chrome {
   $candidates = @(
     "$env:ProgramFiles\Google\Chrome\Application\chrome.exe",
     "${env:ProgramFiles(x86)}\Google\Chrome\Application\chrome.exe",
     "$env:LOCALAPPDATA\Google\Chrome\Application\chrome.exe"
   )
-  $chrome = $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
-  $ext = Join-Path $PSScriptRoot 'extension'
-  if ($chrome) {
-    Start-Process -FilePath $chrome -ArgumentList 'chrome://extensions'
-  } else {
-    Write-Host "Chrome не найден. Откройте chrome://extensions вручную." -ForegroundColor Yellow
-  }
-  Start-Process explorer.exe -ArgumentList $ext
+  return $candidates | Where-Object { $_ -and (Test-Path $_) } | Select-Object -First 1
 }
 
-$venvPy = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
-if (-not (Test-Path $venvPy)) {
+function Test-Vision {
+  try {
+    $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/health' -TimeoutSec 2
+    return [bool]$health.ok
+  } catch {
+    return $false
+  }
+}
+
+function Start-VisionHidden {
+  if (Test-Vision) { return $true }
+
+  $logDir = Join-Path $PSScriptRoot 'logs'
+  New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+  $outLog = Join-Path $logDir 'vision.out.log'
+  $errLog = Join-Path $logDir 'vision.err.log'
+  Remove-Item $outLog, $errLog -ErrorAction SilentlyContinue
+
+  Start-Process -FilePath $script:VenvPy `
+    -ArgumentList 'vision_server.py' `
+    -WorkingDirectory $PSScriptRoot `
+    -WindowStyle Hidden `
+    -RedirectStandardOutput $outLog `
+    -RedirectStandardError $errLog | Out-Null
+
+  for ($i = 0; $i -lt 60; $i++) {
+    if (Test-Vision) { return $true }
+    Start-Sleep -Milliseconds 500
+  }
+  return $false
+}
+
+$script:VenvPy = Join-Path $PSScriptRoot '.venv\Scripts\python.exe'
+if (-not (Test-Path $script:VenvPy)) {
   $sys = Find-SystemPython
   if (-not $sys) {
     Write-Host "Python не найден в PATH." -ForegroundColor Red
@@ -53,58 +73,63 @@ if (-not (Test-Path $venvPy)) {
     Write-Host "https://www.python.org/downloads/"
     exit 1
   }
-  Write-Host "Создаю .venv через $sys" -ForegroundColor Cyan
+  Write-Host "Создаю .venv" -ForegroundColor Cyan
   & $sys -m venv (Join-Path $PSScriptRoot '.venv')
-  if ($LASTEXITCODE -ne 0 -or -not (Test-Path $venvPy)) {
+  if ($LASTEXITCODE -ne 0 -or -not (Test-Path $script:VenvPy)) {
     Write-Host "Не удалось создать .venv." -ForegroundColor Red
     exit 1
   }
 }
 
-Write-Host "Python: $venvPy" -ForegroundColor Cyan
-& $venvPy --version
-
-& $venvPy -c "import PIL, numpy, cv2" 2>$null
+& $script:VenvPy -c "import PIL, numpy, cv2" 2>$null
 if ($LASTEXITCODE -ne 0) {
-  Write-Host "Ставлю зависимости в .venv..." -ForegroundColor Cyan
-  & $venvPy -m pip install -r (Join-Path $PSScriptRoot 'requirements.txt')
+  Write-Host "Ставлю зависимости..." -ForegroundColor Cyan
+  & $script:VenvPy -m pip install -r (Join-Path $PSScriptRoot 'requirements.txt')
   if ($LASTEXITCODE -ne 0) {
     Write-Host "Установка зависимостей не удалась." -ForegroundColor Red
     exit 1
   }
 }
 
-Write-Host "Собираю папку extension\ для Chrome..." -ForegroundColor Cyan
-& $venvPy (Join-Path $PSScriptRoot 'tools\pack_extension.py')
+& $script:VenvPy (Join-Path $PSScriptRoot 'tools\pack_extension.py')
 if ($LASTEXITCODE -ne 0) { exit 1 }
-& $venvPy (Join-Path $PSScriptRoot 'tools\preflight.py') 'extension'
+& $script:VenvPy (Join-Path $PSScriptRoot 'tools\preflight.py') 'extension'
 if ($LASTEXITCODE -ne 0) { exit 1 }
 
-$alive = $false
-try {
-  $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8765/health' -TimeoutSec 2
-  if ($health.ok) { $alive = $true }
-} catch {
-  $alive = $false
+$firstRun = -not (Test-Path $ReadyFlag)
+if ($firstRun -and -not $NoBrowser) {
+  $chrome = Find-Chrome
+  $ext = Join-Path $PSScriptRoot 'extension'
+  if ($chrome) {
+    Start-Process -FilePath $chrome -ArgumentList 'chrome://extensions'
+  } else {
+    Write-Host "Chrome не найден. Откройте chrome://extensions вручную." -ForegroundColor Yellow
+  }
+  Start-Process explorer.exe -ArgumentList $ext
+  Write-Host ""
+  Write-Host "Первый запуск. В Chrome один раз:" -ForegroundColor Green
+  Write-Host "  1. Режим разработчика"
+  Write-Host "  2. Загрузить распакованное"
+  Write-Host "  3. Папка extension (она уже открыта)"
+  Write-Host ""
+  Write-Host "Дальше это окно само закрывается. Сервер работает в фоне."
+  Write-Host "Остановка: stop.bat"
+  Write-Host ""
 }
 
-Write-Host ""
-Write-Host "Расширение: папка extension\ (не корень проекта)." -ForegroundColor Green
-Write-Host "Первый раз: chrome://extensions -> Режим разработчика -> Загрузить распакованное -> extension"
-Write-Host "Дальше достаточно этого запуска и кнопки Обновить на карточке расширения."
-Write-Host ""
+if (-not (Start-VisionHidden)) {
+  Write-Host "Сервер зрения не поднялся. Лог: logs\vision.err.log" -ForegroundColor Red
+  $errLog = Join-Path $PSScriptRoot 'logs\vision.err.log'
+  if (Test-Path $errLog) {
+    Get-Content $errLog -Tail 20 | ForEach-Object { Write-Host $_ }
+  }
+  exit 1
+}
 
-Open-ExtensionsPage
-
-if ($alive) {
-  Write-Host "Сервер зрения уже отвечает на http://127.0.0.1:8765/health" -ForegroundColor Green
-  Write-Host "Второе окно поднимать не нужно. Enter закроет это окно."
+if ($firstRun) {
+  Write-Host "Сервер запущен. Нажмите Enter, когда расширение загружено."
   Read-Host | Out-Null
-  exit 0
+  New-Item -ItemType File -Path $ReadyFlag -Force | Out-Null
 }
 
-Write-Host "Сервер зрения: http://127.0.0.1:8765/read" -ForegroundColor Green
-Write-Host "Это окно — сам сервер. Не закрывайте его, пока нужны карты. Остановка — Ctrl+C."
-Write-Host ""
-& $venvPy (Join-Path $PSScriptRoot 'vision_server.py')
-exit $LASTEXITCODE
+exit 0
