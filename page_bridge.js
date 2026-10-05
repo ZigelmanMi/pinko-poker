@@ -2,22 +2,18 @@
 // v3: pin game state (React/Pixi/WS) + read white card faces from the canvas.
 (function () {
   if (window.__paBridgeV >= 4) return;
+
+  // Работаем только на домене казино: этот скрипт подменяет глобальные
+  // объекты страницы, и на посторонних сайтах ему делать нечего.
+  if (!/e5t\.online/i.test(location.hostname)) return;
+
   window.__paBridgeV = 4;
   window.__paBridge = true;
 
-  try {
-    var proto = HTMLCanvasElement.prototype;
-    if (!proto.__paGetContext) {
-      var origGetContext = proto.getContext;
-      proto.getContext = function (type, attrs) {
-        if (/webgl/i.test(String(type || ''))) {
-          attrs = Object.assign({}, attrs || {}, { preserveDrawingBuffer: true });
-        }
-        return origGetContext.call(this, type, attrs);
-      };
-      proto.__paGetContext = true;
-    }
-  } catch (e0) { /* ignore */ }
+  // Раньше здесь принудительно включался preserveDrawingBuffer: true для всех
+  // WebGL-контекстов страницы. Это заставляет драйвер хранить каждый кадр
+  // (заметная просадка FPS) и легко детектируется. Кадр читается прямо в
+  // колбэке requestAnimationFrame, поэтому флаг не нужен — убран.
 
   var RANK_NUM = { 1: 'A', 11: 'J', 12: 'Q', 13: 'K', 14: 'A', 10: 'T' };
   var RANKS = '23456789TJQKA';
@@ -868,6 +864,9 @@
       wsHits: lastWs.hits,
       cvCount: debug.cv,
       gl: debug.gl,
+      // Метка времени: content_iframe.js по ней понимает, что карты свежие и
+      // снимать скриншот вкладки не нужно.
+      at: Date.now(),
       source: my.length >= 2 ? source : 'none'
     });
   }

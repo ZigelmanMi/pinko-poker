@@ -1,17 +1,17 @@
 {
   "manifest_version": 3,
-  "name": "Poker Assistant — PokerSkill + GigaChat",
-  "version": "3.3.15",
-  "description": "Real-time poker hand analysis with PokerSkill 5-layer system powered by GigaChat LLM",
+  "name": "Poker Assistant",
+  "version": "3.5.0",
+  "description": "Локальный разбор руки: зрение карт, диапазоны и Монте-Карло",
   "permissions": [
     "activeTab",
     "tabs",
-    "storage",
     "scripting",
     "webNavigation"
   ],
   "host_permissions": [
-    "<all_urls>",
+    "*://e5t.online/*",
+    "*://*.e5t.online/*",
     "http://127.0.0.1:8765/*"
   ],
   "background": {
@@ -27,24 +27,18 @@
   },
   "content_scripts": [
     {
-      "matches": ["*://*/*"],
+      "matches": ["*://e5t.online/*", "*://*.e5t.online/*"],
       "js": ["vision.js", "content.js"],
       "run_at": "document_idle"
     },
     {
-      "matches": [
-        "*://pu-web2.e5t.online/*",
-        "*://*.e5t.online/*"
-      ],
+      "matches": ["*://e5t.online/*", "*://*.e5t.online/*"],
       "js": ["page_bridge.js"],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": [
-        "*://pu-web2.e5t.online/*",
-        "*://*.e5t.online/*"
-      ],
+      "matches": ["*://e5t.online/*", "*://*.e5t.online/*"],
       "js": ["vision.js", "card_parser.js", "content_iframe.js"],
       "run_at": "document_idle",
       "all_frames": true
@@ -58,7 +52,7 @@
   "web_accessible_resources": [
     {
       "resources": ["page_bridge.js"],
-      "matches": ["*://*/*"]
+      "matches": ["*://e5t.online/*", "*://*.e5t.online/*"]
     }
   ]
 }

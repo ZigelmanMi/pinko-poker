@@ -276,13 +276,13 @@
   vertical-align: middle;
 }
 
-.pa-badge-llm {
-  background: #1e88e5;
+.pa-badge-fallback {
+  background: #546e7a;
   color: #fff;
 }
 
-.pa-badge-fallback {
-  background: #546e7a;
+.pa-badge-ranges {
+  background: #6a1b9a;
   color: #fff;
 }
 

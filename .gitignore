@@ -1,5 +1,6 @@
 secrets.js
 .venv/
+extension/
 __pycache__/
 *.pyc
 .DS_Store

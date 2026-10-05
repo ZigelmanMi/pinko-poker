@@ -8,7 +8,7 @@
   if (!isGame) return;
 
   window.__pokerAssistantInitialized = true;
-  try { document.documentElement.setAttribute('data-pa-loaded', '3.3.15'); } catch (e) { /* ignore */ }
+  try { document.documentElement.setAttribute('data-pa-loaded', '3.5.0'); } catch (e) { /* ignore */ }
 
   window.addEventListener('message', function (e) {
     if (!e.data) return;
@@ -33,11 +33,34 @@
   } catch (e) { /* ignore */ }
 
   var lastShotAt = 0;
+  // Телеметрия: видно, сколько раз удалось обойтись без скриншота.
+  var shotStats = { captures: 0, pyAnswers: 0, localAnswers: 0, bridgeSkips: 0, cacheHits: 0 };
+  // Отдаём статистику парсеру, чтобы она попала в состояние и в виджет.
+  window.__paShotStats = shotStats;
+  // Источники, при которых карты уже прочитаны прямо из страницы (canvas,
+  // React, Pixi). В этом случае скриншот вкладки и поход на локальный сервер
+  // зрения не нужны — это экономит мегабайты трафика и CPU.
+  var BRIDGE_SOURCES = { cv: 1, react: 1, pixi: 1 };
+  function bridgeHasFreshCards() {
+    var br = window.__paBridgeCards;
+    if (!br || !br.at) return false;
+    if (!BRIDGE_SOURCES[br.source]) return false;
+    if (!br.myCards || br.myCards.length < 2) return false;
+    // Данные считаем свежими 6 секунд: если мост замолчал, вернёмся к скриншотам.
+    return (Date.now() - br.at) < 6000;
+  }
+
   function grabTableShot() {
     var now = Date.now();
     if (now - lastShotAt < 1800) return;
     lastShotAt = now;
     if (!paRuntimeOk() || !window.PokerVision) return;
+    if (bridgeHasFreshCards()) {
+      // Мост отдал карты — сервер зрения не беспокоим.
+      shotStats.bridgeSkips++;
+      window.__paShotSource = 'bridge';
+      return;
+    }
     try {
       chrome.runtime.sendMessage({ action: 'captureTable' }, function (res) {
         if (!paRuntimeOk()) return;
@@ -45,7 +68,10 @@
           window.__paShotCards = window.__paShotCards || { myCards: [], communityCards: [], error: chrome.runtime.lastError.message };
           return;
         }
+        shotStats.captures++;
+        if (res && res.cached) shotStats.cacheHits++;
         if (res && res.cards && res.cards.source === 'py') {
+          shotStats.pyAnswers++;
           window.__paShotCards = res.cards;
           return;
         }
@@ -55,6 +81,7 @@
         }
         window.PokerVision.readDataUrl(res.dataUrl).then(function (cards) {
           if (window.__paShotCards && window.__paShotCards.source === 'py') return;
+          shotStats.localAnswers++;
           window.__paShotCards = cards;
         }).catch(function (err) {
           if (window.__paShotCards && window.__paShotCards.source === 'py') return;
@@ -105,13 +132,33 @@
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+    if (this._pendingScan) {
+      clearTimeout(this._pendingScan);
+      this._pendingScan = null;
+    }
     try { chrome.runtime.sendMessage({ action: 'hudUpdate', data: { dead: true } }); } catch (e) { /* ignore */ }
   };
 
   PokerAssistantIframe.prototype.initializeObserver = function () {
     var self = this;
+    // Игра постоянно перерисовывает DOM. Без задержки observer вызывал бы
+    // полный разбор стола на каждое изменение атрибутов. Откладываем разбор
+    // на 250 мс и не даём ему запускаться чаще одного раза в 1.5 с.
+    var lastRun = 0;
+    var MIN_GAP_MS = 1500;
+    this._pendingScan = null;
+    this._scheduleScan = function () {
+      if (self._pendingScan || self.dead) return;
+      var now = Date.now();
+      var delay = Math.max(250, MIN_GAP_MS - (now - lastRun));
+      self._pendingScan = setTimeout(function () {
+        self._pendingScan = null;
+        lastRun = Date.now();
+        self.detectGameState();
+      }, delay);
+    };
     try {
-      this.observer = new MutationObserver(function () { self.detectGameState(); });
+      this.observer = new MutationObserver(function () { self._scheduleScan(); });
       this.observer.observe(document.body, {
         childList: true,
         subtree: true,

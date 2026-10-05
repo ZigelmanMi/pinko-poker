@@ -1,0 +1,25 @@
+{
+  "name": "pin-pok",
+  "version": "3.5.0",
+  "private": true,
+  "description": "Poker assistant extension: local Python card vision, position ranges and Monte Carlo",
+  "scripts": {
+    "check": "node tools/check-syntax.js",
+    "test": "node tools/run-tests.js",
+    "test:hand": "node test_hand_eval.js",
+    "test:ranges": "node test_range_equity.js && node test_preflop_ranges.js && node test_postflop_ranges.js",
+    "test:action": "node test_action_logic.js",
+    "test:vision": "node test_frame_diff.js",
+    "test:parser": "node test_parser_node.js",
+    "test:e2e": "node test_dom_e2e.js",
+    "test:server": "python tools/verify_server.py",
+    "preflight": "python tools/preflight.py",
+    "vision": "python tools/check_vision_samples.py",
+    "verify": "npm run check && npm test",
+    "start": "powershell -NoProfile -ExecutionPolicy Bypass -File ./start.ps1",
+    "pack": "python tools/pack_extension.py && python tools/preflight.py extension"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

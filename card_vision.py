@@ -12,6 +12,7 @@ Used by vision_assistant.py. Run self-test:
 """
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -42,12 +43,23 @@ SEED_CARDS = (
 )
 
 FONT_PATHS = [
+    # Windows: сначала пробуем через переменные окружения, потом по типовым путям.
+    # Без этих строк на Windows не находится НИ ОДНОГО шрифта, и ранги, для которых
+    # нет файла-шаблона (A, Q, 9, 8), прочитать нечем.
+    str(Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts' / 'arialbd.ttf'),
+    str(Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts' / 'segoeuib.ttf'),
+    str(Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts' / 'calibrib.ttf'),
+    str(Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts' / 'verdanab.ttf'),
+    str(Path(os.environ.get('WINDIR', 'C:/Windows')) / 'Fonts' / 'tahomabd.ttf'),
+    str(Path(os.environ.get('LOCALAPPDATA', '')) / 'Microsoft' / 'Windows' / 'Fonts' / 'arialbd.ttf'),
+    # Linux / macOS
     '/usr/share/fonts/truetype/liberation/LiberationSansNarrow-Bold.ttf',
     '/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf',
     '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf',
     '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
     '/usr/share/fonts/truetype/ubuntu/Ubuntu-B.ttf',
     '/usr/share/fonts/truetype/ubuntu/Ubuntu-Bold.ttf',
+    '/System/Library/Fonts/Supplemental/Arial Bold.ttf',
 ]
 
 _RANK_TEMPLATES = []  # (rank, source, 32x44 uint8 ink=255)

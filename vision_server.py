@@ -1,18 +1,29 @@
 #!/usr/bin/env python3
 """Local card-vision HTTP server for the Chrome extension.
 
-  python3 /home/z/pok/vision_server.py
+  python3 vision_server.py
 
 Listens on http://127.0.0.1:8765
   GET  /health
   POST /read   JSON { "image": "data:image/png;base64,..." }
+
+Безопасность:
+  * принимаются только запросы с допустимым Origin (расширение Chrome или
+    localhost). Раньше стоял Access-Control-Allow-Origin: '*', из-за чего
+    любая открытая вкладка могла слать изображения на этот сервер;
+  * тело запроса ограничено по размеру, иначе одна вкладка может отправить
+    гигабайты и уронить процесс по памяти;
+  * простейший лимит частоты, чтобы сервер не молотил один и тот же кадр.
 """
 from __future__ import annotations
 
 import base64
 import io
 import json
+import re
 import sys
+import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from PIL import Image
@@ -21,6 +32,21 @@ from card_vision import detect_card_regions, read_card
 
 HOST = '127.0.0.1'
 PORT = 8765
+
+# Максимальный размер тела запроса: 8 МБ. PNG-скриншот стола в base64
+# укладывается в ~2–4 МБ, так что запас есть, а флуд отсекается.
+MAX_BODY_BYTES = 8 * 1024 * 1024
+# Не чаще одного запроса в 0.4 с: расширение и так шлёт раз в ~2 с.
+MIN_INTERVAL_SEC = 0.4
+
+# Допустимые источники запроса: страница расширения и локальные страницы.
+ALLOWED_ORIGIN_RE = re.compile(
+    r'^(chrome-extension://[a-p]{32}|moz-extension://[0-9a-f-]+|'
+    r'https?://(localhost|127\.0\.0\.1)(:\d+)?)$'
+)
+
+_last_request_at = 0.0
+_rate_lock = threading.Lock()
 
 
 def decode_image(data_url: str) -> Image.Image:
@@ -70,13 +96,48 @@ def read_table(img: Image.Image) -> dict:
 
 
 class Handler(BaseHTTPRequestHandler):
+    # Размер строки запроса тоже ограничиваем.
+    max_header_size = 16384
+
+    def _origin(self) -> str:
+        return self.headers.get('Origin') or ''
+
+    def _origin_allowed(self) -> bool:
+        origin = self._origin()
+        if not origin:
+            # Запросы без Origin (curl, локальные скрипты) разрешаем.
+            return True
+        return bool(ALLOWED_ORIGIN_RE.match(origin))
+
     def _cors(self) -> None:
-        self.send_header('Access-Control-Allow-Origin', '*')
+        origin = self._origin()
+        if origin and ALLOWED_ORIGIN_RE.match(origin):
+            self.send_header('Access-Control-Allow-Origin', origin)
+            self.send_header('Vary', 'Origin')
         self.send_header('Access-Control-Allow-Methods', 'POST, GET, OPTIONS')
         self.send_header('Access-Control-Allow-Headers', 'Content-Type')
-        self.send_header('Access-Control-Allow-Private-Network', 'true')
+        # Private Network Access: отвечаем только если запрос действительно
+        # пришёл из разрешённого источника.
+        if self._origin_allowed():
+            self.send_header('Access-Control-Allow-Private-Network', 'true')
+
+    def _send_json(self, status: int, payload: dict) -> None:
+        body = json.dumps(payload).encode()
+        self.send_response(status)
+        self._cors()
+        self.send_header('Content-Type', 'application/json')
+        self.send_header('Content-Length', str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _reject(self, status: int, message: str) -> None:
+        self._send_json(status, {'error': message, 'myCards': [], 'communityCards': []})
 
     def do_OPTIONS(self) -> None:
+        if not self._origin_allowed():
+            self.send_response(403)
+            self.end_headers()
+            return
         self.send_response(204)
         self._cors()
         self.end_headers()
@@ -86,35 +147,50 @@ class Handler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
             return
-        self.send_response(200)
-        self._cors()
-        self.send_header('Content-Type', 'application/json')
-        self.end_headers()
-        self.wfile.write(b'{"ok":true,"engine":"card_vision"}')
+        self._send_json(200, {'ok': True, 'engine': 'card_vision'})
 
     def do_POST(self) -> None:
         if self.path.split('?', 1)[0] != '/read':
             self.send_response(404)
             self.end_headers()
             return
-        n = int(self.headers.get('Content-Length') or '0')
+        if not self._origin_allowed():
+            self._reject(403, 'origin not allowed')
+            return
+
         try:
-            body = json.loads(self.rfile.read(n) or b'{}')
+            length = int(self.headers.get('Content-Length') or '0')
+        except ValueError:
+            self._reject(400, 'bad content-length')
+            return
+        if length <= 0:
+            self._reject(400, 'empty body')
+            return
+        if length > MAX_BODY_BYTES:
+            self._reject(413, 'body too large (max %d bytes)' % MAX_BODY_BYTES)
+            return
+
+        # Лимит частоты: лишние запросы не обрабатываем.
+        global _last_request_at
+        with _rate_lock:
+            now = time.monotonic()
+            if now - _last_request_at < MIN_INTERVAL_SEC:
+                self._reject(429, 'too many requests')
+                return
+            _last_request_at = now
+
+        try:
+            body = json.loads(self.rfile.read(length) or b'{}')
+        except Exception as e:
+            self._reject(400, 'bad json: %s' % e)
+            return
+
+        try:
             img = decode_image(body.get('image') or '')
             result = read_table(img)
-            payload = json.dumps(result).encode()
-            self.send_response(200)
-            self._cors()
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(payload)
+            self._send_json(200, result)
         except Exception as e:
-            err = json.dumps({'error': str(e), 'myCards': [], 'communityCards': []}).encode()
-            self.send_response(500)
-            self._cors()
-            self.send_header('Content-Type', 'application/json')
-            self.end_headers()
-            self.wfile.write(err)
+            self._reject(500, str(e))
 
     def log_message(self, fmt: str, *args) -> None:
         sys.stderr.write('[vision-server] ' + (fmt % args) + '\n')

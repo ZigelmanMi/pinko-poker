@@ -46,6 +46,12 @@
       (state._raw && state._raw.source ? ' · src: ' + state._raw.source : '') +
       (state._raw && state._raw.shotBoxes != null ? ' · boxes: ' + state._raw.shotBoxes : '') +
       (state._raw && state._raw.shotReads != null ? ' · reads: ' + state._raw.shotReads : '') +
+      (state._raw && state._raw.shotStats
+        ? ' · <span title="bridgeSkips — кадры не снимались, cacheHits — кадр не отправлялся повторно">' +
+          '📷 скриншотов: ' + state._raw.shotStats.captures +
+          ', из кэша: ' + state._raw.shotStats.cacheHits +
+          ', без съёмки: ' + state._raw.shotStats.bridgeSkips + '</span>'
+        : '') +
       '</div>' +
       (extra.warning ? '<div class="pa-warning">⚠️ ' + extra.warning + '</div>' : '') +
       '<div class="pa-hint">Окно можно перетащить с стола — на край экрана или второй монитор.</div>';
@@ -69,9 +75,9 @@
       return;
     }
     var color = ACTION_COLORS[decision.action] || '#ffffff';
-    var sourceBadge = decision.source === 'fallback'
-      ? '<span class="pa-badge pa-badge-fallback">⚙️ GTO/Monte Carlo</span>'
-      : '<span class="pa-badge pa-badge-llm">🤖 GigaChat</span>';
+    var sourceBadge = decision.source === 'ranges'
+      ? '<span class="pa-badge pa-badge-ranges">📋 Эквити против диапазона</span>'
+      : '<span class="pa-badge pa-badge-fallback">⚙️ Монте-Карло: случайные руки</span>';
     rec.className = 'pa-rec';
     rec.innerHTML =
       '<div class="pa-street">Улица: ' + (response.street || '?') + ' ' + sourceBadge + '</div>' +
@@ -79,11 +85,16 @@
       '<div class="pa-details">' +
         '<div>📊 Эквити (шанс выиграть): ~' + (decision.winRate != null ? decision.winRate : '—') + '%</div>' +
         '<div>💰 Pot Odds (цена колла): ' + (decision.potOdds != null ? decision.potOdds : '—') + '%</div>' +
+        (response.rangeName ? '<div>📋 Диапазон: ' + response.rangeName + '</div>' : '') +
         '<div>📈 ' + (decision.reason || '') + '</div>' +
       '</div>';
   }
 
-  function applyHud(hud) {
+  function applyHud(hud, version) {
+    if (version) {
+      var vEl = document.getElementById('pa-version');
+      if (vEl) vEl.textContent = 'v' + version;
+    }
     if (!hud) return;
     if (hud.dead) {
       var rec = document.getElementById('pa-rec');
@@ -98,12 +109,12 @@
   }
 
   chrome.runtime.onMessage.addListener(function (msg) {
-    if (msg && msg.action === 'hudRender') applyHud(msg.hud);
+    if (msg && msg.action === 'hudRender') applyHud(msg.hud, msg.version);
   });
 
   chrome.runtime.sendMessage({ action: 'hudHello' }, function (hud) {
     if (chrome.runtime.lastError) return;
-    applyHud(hud);
+    applyHud(hud, hud && hud.version);
   });
 
   document.getElementById('pa-man-go').addEventListener('click', function () {

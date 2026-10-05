@@ -2,25 +2,45 @@
 // Handles poker solver logic and communication with content script
 // iframe injection is handled by content.js via direct DOM access
 
+// Порядок важен: hand_eval → monte_carlo → ranges, потому что оба модуля
+// диапазонов опционально используют симулятор и оценщик.
 importScripts(
-  'gigachat_adapter.js',
-  'poker_skill_prompts.js',
-  'gto_preflop.js',
-  'monte_carlo.js'
+  'hand_eval.js',
+  'monte_carlo.js',
+  'preflop_ranges.js',
+  'postflop_ranges.js',
+  'frame_diff.js'
 );
-
-var GIGACHAT_API_KEY = '';
-try { importScripts('secrets.js'); } catch (e) { /* optional, see secrets.example.js */ }
-const gigachat = new GigaChatAdapter(GIGACHAT_API_KEY);
-gigachat.model = 'GigaChat';
-gigachat.maxTokens = 1024;
-gigachat.temperature = 0.3;
-let gigachatDown = false;
 
 // Hand counter for unique hand IDs
 let handCounter = 0;
-let lastShot = { dataUrl: null, at: 0, cards: null };
+// Кэш последнего распознавания: снимок + его dhash + результат зрения.
+// Если картинка стола не изменилась, повторно ничего не отправляем.
+let visionCache = { at: 0, cards: null, dataUrl: null, hash: null, payload: null };
 const PY_VISION = 'http://127.0.0.1:8765/read';
+
+/**
+ * Посчитать perceptual hash кадра (dhash через frame_diff.js).
+ * Возвращает null, если окружение не позволяет (нет OffscreenCanvas и т. п.) —
+ * тогда просто отправляем кадр как раньше.
+ */
+async function computeFrameHash(dataUrl) {
+  if (typeof FrameDiff === 'undefined' || !FrameDiff || !FrameDiff.dhashFromRgba) return null;
+  try {
+    const blob = await fetch(dataUrl).then((r) => r.blob());
+    const bitmap = await createImageBitmap(blob);
+    const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+    const ctx = canvas.getContext('2d');
+    ctx.drawImage(bitmap, 0, 0);
+    const img = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
+    const hash = FrameDiff.dhashFromRgba(img.data, bitmap.width, bitmap.height, { downscale: 320 });
+    if (typeof bitmap.close === 'function') bitmap.close();
+    return hash;
+  } catch (e) {
+    console.warn('[PokerAssistant] dhash недоступен:', (e && e.message) || e);
+    return null;
+  }
+}
 
 // Domains hosting the poker game iframe
 const IFRAME_URL_PATTERNS = ['pu-web2.e5t.online', '.e5t.online'];
@@ -82,7 +102,12 @@ function findHudWindow() {
 }
 
 function fanoutHud() {
-  chrome.runtime.sendMessage({ action: 'hudRender', hud: lastHud }, function () {
+  // Версию берём из манифеста — единственное место, где она должна меняться.
+  let version = '';
+  try {
+    version = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '';
+  } catch (e) { /* ignore */ }
+  chrome.runtime.sendMessage({ action: 'hudRender', hud: lastHud, version: version }, function () {
     void chrome.runtime.lastError;
   });
 }
@@ -245,31 +270,73 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
     const tabId = sender.tab && sender.tab.id;
     const windowId = sender.tab ? sender.tab.windowId : undefined;
     const now = Date.now();
-    if (lastShot.dataUrl && now - lastShot.at < 1400) {
-      sendResponse({ dataUrl: lastShot.dataUrl, cached: true, cards: lastShot.cards || null, py: pyCardsUseful(lastShot.cards) });
+
+    const useCache = (reason) => {
+      sendResponse({
+        dataUrl: visionCache.dataUrl,
+        cached: true,
+        cacheReason: reason,
+        cards: visionCache.cards || null,
+        py: pyCardsUseful(visionCache.cards)
+      });
       if (tabId != null) {
-        if (pyCardsUseful(lastShot.cards)) broadcastCards(tabId, lastShot.cards);
-        else broadcastShot(tabId, lastShot.dataUrl);
+        if (pyCardsUseful(visionCache.cards)) broadcastCards(tabId, visionCache.cards);
+        else if (visionCache.dataUrl) broadcastShot(tabId, visionCache.dataUrl);
       }
+    };
+
+    // Совсем недавно уже снимали — отдаём то же самое.
+    if (visionCache.dataUrl && now - visionCache.at < 1400) {
+      useCache('fresh');
       return true;
     }
+
     try {
       chrome.tabs.captureVisibleTab(windowId, { format: 'png' }, (dataUrl) => {
         if (chrome.runtime.lastError) {
           sendResponse({ error: chrome.runtime.lastError.message || 'capture failed' });
           return;
         }
-        lastShot = { dataUrl: dataUrl, at: Date.now(), cards: null };
-        readWithPython(dataUrl).then((cards) => {
-          lastShot.cards = cards;
-          const good = pyCardsUseful(cards);
-          sendResponse({ dataUrl: dataUrl, cards: cards || null, py: good });
-          if (tabId == null) return;
-          if (good) broadcastCards(tabId, cards);
-          else broadcastShot(tabId, dataUrl);
-        }).catch((err) => {
-          sendResponse({ dataUrl: dataUrl, cards: null, py: false, pyError: String((err && err.message) || err) });
-          if (tabId != null) broadcastShot(tabId, dataUrl);
+
+        // Кадр снят, но отправлять его на сервер имеет смысл только если
+        // картинка изменилась. dhash устойчив к пересжатию PNG и мелкому шуму,
+        // поэтому одинаковые столы дают одинаковый хеш.
+        computeFrameHash(dataUrl).then((hash) => {
+          const unchanged = hash && visionCache.hash && hash === visionCache.hash;
+          if (unchanged && visionCache.cards) {
+            visionCache.at = Date.now();
+            visionCache.dataUrl = dataUrl;
+            useCache('hash');
+            return;
+          }
+          visionCache.at = Date.now();
+          visionCache.hash = hash;
+          visionCache.dataUrl = dataUrl;
+
+          readWithPython(dataUrl).then((cards) => {
+            visionCache.cards = cards || null;
+            const good = pyCardsUseful(cards);
+            sendResponse({ dataUrl: dataUrl, cards: cards || null, py: good, hash: hash });
+            if (tabId == null) return;
+            if (good) broadcastCards(tabId, cards);
+            else broadcastShot(tabId, dataUrl);
+          }).catch((err) => {
+            sendResponse({ dataUrl: dataUrl, cards: null, py: false, pyError: String((err && err.message) || err) });
+            if (tabId != null) broadcastShot(tabId, dataUrl);
+          });
+        }).catch(() => {
+          // Если хеш посчитать не удалось — работаем как раньше, без кэша.
+          readWithPython(dataUrl).then((cards) => {
+            visionCache = { at: Date.now(), cards: cards || null, dataUrl: dataUrl, hash: null, payload: null };
+            const good = pyCardsUseful(cards);
+            sendResponse({ dataUrl: dataUrl, cards: cards || null, py: good });
+            if (tabId == null) return;
+            if (good) broadcastCards(tabId, cards);
+            else broadcastShot(tabId, dataUrl);
+          }).catch((err) => {
+            sendResponse({ dataUrl: dataUrl, cards: null, py: false, pyError: String((err && err.message) || err) });
+            if (tabId != null) broadcastShot(tabId, dataUrl);
+          });
         });
       });
     } catch (e) {
@@ -285,7 +352,11 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   }
 
   if (request.action === 'hudHello') {
-    sendResponse(lastHud);
+    let version = '';
+    try {
+      version = (chrome.runtime.getManifest && chrome.runtime.getManifest().version) || '';
+    } catch (e) { /* ignore */ }
+    sendResponse(Object.assign({ version: version }, lastHud));
     return true;
   }
 
@@ -303,7 +374,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
 
   if (request.action === 'analyzeHand') {
     const handState = request.hand || {};
-    analyzeHandWithPokerSkill(handState).then((result) => {
+    analyzeHand(handState).then((result) => {
       applyHud({
         state: (result && result.state) || responseState(handState),
         extra: { street: result && result.street, warning: result && result.readingWarning },
@@ -424,24 +495,178 @@ function normalizeHandCards(c1, c2) {
   return high + low + (suited ? 's' : 'o');
 }
 
-/** Find GTO table row for a normalized hand key (handles T/10 and o-suffix) */
-function lookupGtoHand(hand) {
-  if (!hand) return 'default';
-  // 1) Exact key: pairs ('AA'), suited ('AKs', 'ATs'), offsuit without suffix ('AK')
-  if (PREFLOP_GTO[hand]) return hand;
-  // 2) Strip 'o' suffix: 'AKo' -> 'AK', 'QTo' -> 'QT'
-  const offsuit = hand.replace(/o$/, '');
-  if (PREFLOP_GTO[offsuit]) return offsuit;
-  // 3) Convert 'T' -> '10' for table entries like 'A10o'
-  const with10 = hand.replace(/^([AKQJ2-9])T/, '$110');
-  if (PREFLOP_GTO[with10]) return with10;
-  return 'default';
+/**
+ * Сколько игроков в раздаче, в пределах 2..6.
+ */
+function tableSize(handState) {
+  return Math.min(Math.max(parseInt(handState.numPlayers, 10) || 2, 2), 6);
+}
+
+/**
+ * Самая ранняя позиция для этого размера стола.
+ * 6-max → UTG, 5 → MP, 4 → CO, 3 → BTN. Фишки дилера в HTML нет,
+ * поэтому неизвестное открытие берём отсюда, а не с широкого чарта кнопки.
+ */
+function earliestSeat(numPlayers) {
+  const ORDER = ['UTG', 'MP', 'CO', 'BTN', 'SB', 'BB'];
+  if (numPlayers <= 2) return 'BTN';
+  return ORDER[ORDER.length - numPlayers];
+}
+
+/**
+ * Префлоп-ситуация по размеру ставки и банка, в больших блайндах.
+ *
+ * Кнопка Call на неоткрытом банке часто отсутствует, поэтому «ставки нет»
+ * не значит «мы на кнопке». Границы:
+ *   * добор до ~1.2 ББ и банк ещё блайнды — никто не открывался;
+ *   * добор 1.2–2 ББ — большой блайнд закрывает открытие (1 ББ уже вложен);
+ *   * добор 2–6 ББ — обычное открытие, герой не блайнд;
+ *   * добор от 6 ББ, либо от 4 ББ при уже большом банке — против нас 3-бет.
+ * Без известного блайнда положительная ставка считается обычным открытием:
+ * отличить 3-бет от рейза в фишках нельзя.
+ */
+function inferPreflopSpot(handState) {
+  const numPlayers = tableSize(handState);
+  const bet = Number(handState.betToCall) || 0;
+  const pot = Number(handState.pot) || 0;
+  const bb = Number(handState.bigBlind) || 0;
+  const betBB = bb > 0 ? bet / bb : 0;
+  const potBB = bb > 0 ? pot / bb : 0;
+
+  let situation;
+  if (bb > 0) {
+    if (betBB >= 6 || (betBB >= 4 && potBB >= 8)) situation = 'vs_3bet';
+    else if (betBB > 1.2 && betBB <= 2) situation = 'in_bb_vs_open';
+    else if (betBB > 2) situation = 'vs_open';
+    else if (potBB >= 4) situation = 'in_bb_vs_open';
+    else situation = 'unopened';
+  } else {
+    situation = bet > 0 ? 'vs_open' : 'unopened';
+  }
+
+  if (numPlayers === 2) {
+    if (situation === 'vs_3bet') {
+      return { heroPosition: 'BTN', villainPosition: 'BB', situation: 'vs_3bet' };
+    }
+    if (situation === 'unopened') {
+      return { heroPosition: 'BTN', villainPosition: 'BB', situation: 'unopened' };
+    }
+    return { heroPosition: 'BB', villainPosition: 'BTN', situation: 'in_bb_vs_open' };
+  }
+
+  if (situation === 'unopened') {
+    return { heroPosition: earliestSeat(numPlayers), villainPosition: 'BB', situation: situation };
+  }
+  if (situation === 'in_bb_vs_open') {
+    return { heroPosition: 'BB', villainPosition: 'BTN', situation: situation };
+  }
+  if (situation === 'vs_3bet') {
+    return { heroPosition: 'CO', villainPosition: 'BTN', situation: situation };
+  }
+  return { heroPosition: 'CO', villainPosition: 'MP', situation: 'vs_open' };
+}
+
+/**
+ * Позиция героя и соперника.
+ *
+ * На префлопе — inferPreflopSpot. На постфлопе фишки дилера по-прежнему нет:
+ * хедз-ап со ставкой считаем большим блайндом (без позиции), в мультивее
+ * не назначаем BB по размеру контбета, иначе маленькая ставка получает
+ * штраф аут-оф-позишн.
+ */
+function detectPositions(handState) {
+  if (detectStreet(handState) === 'preflop') return inferPreflopSpot(handState);
+
+  const numPlayers = tableSize(handState);
+  const bet = Number(handState.betToCall) || 0;
+  if (numPlayers === 2) {
+    if (bet > 0) return { heroPosition: 'BB', villainPosition: 'BTN', situation: 'postflop' };
+    return { heroPosition: 'BTN', villainPosition: 'BB', situation: 'postflop' };
+  }
+  const hero = earliestSeat(numPlayers);
+  return {
+    heroPosition: hero,
+    villainPosition: hero === 'BB' ? 'BTN' : 'BB',
+    situation: 'postflop'
+  };
+}
+
+/**
+ * Префлоп-решение по диапазонам позиций (preflop_ranges.js).
+ * Возвращает null, если модуль недоступен — тогда решение идёт через LLM.
+ */
+function buildPreflopRangeDecision(handState) {
+  if (typeof PreflopRanges === 'undefined' || !PreflopRanges || !PreflopRanges.getAction) return null;
+  const hole = (handState.myCards || []).filter((c) => c && c.rank).slice(0, 2);
+  if (hole.length < 2) return null;
+
+  const bigBlind = Number(handState.bigBlind) || 0;
+  const pot = Number(handState.pot) || 0;
+  const betToCall = Number(handState.betToCall) || 0;
+  const heroStack = Number(handState.heroStack) > 0 ? Number(handState.heroStack) : 0;
+  const spot = detectPositions(handState);
+  const heroPosition = spot.heroPosition;
+  const villainPosition = spot.villainPosition;
+  const situation = spot.situation || 'unopened';
+
+  const toBB = (value) => (bigBlind > 0 ? value / bigBlind : value);
+
+  let result;
+  try {
+    result = PreflopRanges.getAction({
+      holeCards: hole,
+      position: heroPosition,
+      situation: situation,
+      raiserPosition: villainPosition,
+      potBB: toBB(pot),
+      betToCallBB: toBB(betToCall),
+      effectiveStackBB: toBB(heroStack) || 100,
+      numPlayers: parseInt(handState.numPlayers, 10) || 2
+    });
+  } catch (e) {
+    console.warn('[PokerAssistant] Префлоп-диапазоны:', (e && e.message) || e);
+    return null;
+  }
+  if (!result || !result.action) return null;
+
+  let amount = 0;
+  if (result.action === 'RAISE' && result.sizingBB) {
+    amount = Number(result.sizingBB) * (bigBlind > 0 ? bigBlind : 1);
+    if (heroStack > 0 && amount > heroStack) amount = heroStack;
+    amount = Math.round(amount * 100) / 100;
+  }
+
+  const equityInfo = computeEquity(handState);
+  const totalPot = pot + betToCall;
+  const potOdds = totalPot > 0 ? (betToCall / totalPot * 100) : 0;
+
+  return {
+    hand_id: null, // проставит вызывающий код
+    street: 'preflop',
+    decision: {
+      action: result.action,
+      amount: amount,
+      reason: (result.reason || '') + ' [' + (result.rangeName || 'диапазон') + ']',
+      winRate: Number(equityInfo.equity).toFixed(1),
+      potOdds: potOdds.toFixed(1),
+      source: 'ranges'
+    },
+    equity: Number(equityInfo.equity).toFixed(1),
+    equity_source: equityInfo.source,
+    hand: result.handKey || '',
+    rangeName: result.rangeName || '',
+    position: heroPosition
+  };
 }
 
 /**
  * Compute real equity:
- *  - Preflop: static GTO win-rate table by number of players
- *  - Postflop: Monte Carlo simulation vs N random opponents
+ *  - Preflop: Монте-Карло против N случайных рук.
+ *      Раньше здесь бралось значение из PREFLOP_GTO — это таблица all-in
+ *      эквити конкретных рук, а не частоты. Монте-Карло на новом оценщике
+ *      считается за единицы миллисекунд и даёт честную цифру для любой руки,
+ *      включая те, которых в таблице нет.
+ *  - Postflop: Монте-Карло против N случайных рук.
  */
 function computeEquity(handState) {
   const hole = (handState.myCards || []).filter(c => c && c.rank).slice(0, 2);
@@ -450,179 +675,180 @@ function computeEquity(handState) {
 
   if (hole.length < 2) return { equity: 0, source: 'none' };
 
-  if (board.length === 0) {
-    // ---- PREFLOP: GTO table ----
-    const norm = normalizeHandCards(hole[0], hole[1]);
-    const gtoKey = lookupGtoHand(norm);
-    const row = PREFLOP_GTO[gtoKey] || PREFLOP_GTO['default'];
-    const winRate = row[n] || row[2];
-    return { equity: winRate, source: 'GTO', hand: norm, gtoKey };
-  }
-
-  // ---- POSTFLOP: Monte Carlo ----
   try {
+    // Постфлоп считаем против ДИАПАЗОНА соперника, а не против случайных рук:
+    // против случайных рук эквити систематически завышено. Если модуль
+    // диапазонов недоступен — откатываемся на прежний расчёт.
+    if (board.length >= 3 && typeof PostflopRanges !== 'undefined' && PostflopRanges && PostflopRanges.getEquity) {
+      const { potType, aggression } = inferPotContext(handState);
+      const r = PostflopRanges.getEquity({
+        holeCards: hole,
+        board: board,
+        potType: potType,
+        aggression: aggression,
+        opponents: n - 1,
+        iterations: 6000
+      });
+      if (r && typeof r.equity === 'number') {
+        return {
+          equity: r.equity,
+          source: 'range',
+          hand: normalizeHandCards(hole[0], hole[1]),
+          rangeName: r.rangeName || ''
+        };
+      }
+    }
+
     const mc = new MonteCarloSimulator();
-    const res = mc.computeWinRate(hole, board, n - 1, 4000);
-    return { equity: parseFloat(res.winRate), source: 'MonteCarlo' };
+    const iters = board.length === 0 ? 3000 : 6000;
+    const res = mc.computeWinRate(hole, board, n - 1, iters);
+    return {
+      equity: Number(res.equity),
+      source: 'MonteCarlo',
+      hand: normalizeHandCards(hole[0], hole[1])
+    };
   } catch (e) {
     console.warn('[PokerAssistant] Monte Carlo failed:', e);
-    return { equity: 40, source: 'estimate' };
+    return { equity: 0, source: 'none' };
   }
 }
 
-function buildLegalActions(street, betToCall) {
-  const actions = [];
-  if (betToCall > 0) {
-    actions.push('c', 'f', 'b');
-  } else {
-    actions.push('k', 'b');
-  }
-  return actions;
+/**
+ * Прикинуть контекст банка для постфлоп-диапазонов.
+ *
+ * Истории ставок в HTML нет. Большой банк (~12 ББ и больше) — 3-бет.
+ * В обычном банке ставку в героя считаем контбетом префлоп-агрессора
+ * (srp_pfr): коллёр так ставит реже. Чек до героя — диапазон коллера
+ * (srp_caller), который играл без инициативы.
+ */
+function inferPotContext(handState) {
+  const bigBlind = Number(handState.bigBlind) || 0;
+  const pot = Number(handState.pot) || 0;
+  const betToCall = Number(handState.betToCall) || 0;
+  const potBB = bigBlind > 0 ? pot / bigBlind : pot;
+
+  let potType;
+  if (potBB >= 12) potType = 'threebet';
+  else if (betToCall > 0) potType = 'srp_pfr';
+  else potType = 'srp_caller';
+
+  const aggression = betToCall > 0 ? 'bet' : 'check';
+  return { potType: potType, aggression: aggression };
 }
 
-function detectActionHistory(handState) {
-  if (handState.action_history && Array.isArray(handState.action_history) && handState.action_history.length > 0) {
-    return handState.action_history;
-  }
-  if (Number(handState.betToCall) > 0) return ['bet'];
-  return [];
-}
+/**
+ * Постфлоп-решение по диапазонам (postflop_ranges.js).
+ * Возвращает null, если модуль недоступен.
+ */
+function buildPostflopRangeDecision(handState) {
+  if (typeof PostflopRanges === 'undefined' || !PostflopRanges || !PostflopRanges.getAction) return null;
+  const hole = (handState.myCards || []).filter((c) => c && c.rank).slice(0, 2);
+  const board = (handState.communityCards || []).filter((c) => c && c.rank).slice(0, 5);
+  if (hole.length < 2 || board.length < 3) return null;
 
-function formatCardsForPokerSkill(cards) {
-  if (!cards || !Array.isArray(cards) || cards.length === 0) return '';
-  return cards.map(card => {
-    if (!card || !card.rank) return '';
-    const rank = String(card.rank).toUpperCase();
-    const suit = card.suit ? String(card.suit).toLowerCase() : '';
-    return rank + suit;
-  }).join('');
+  const bigBlind = Number(handState.bigBlind) || 0;
+  const pot = Number(handState.pot) || 0;
+  const betToCall = Number(handState.betToCall) || 0;
+  const heroStack = Number(handState.heroStack) > 0 ? Number(handState.heroStack) : 0;
+  const { potType, aggression } = inferPotContext(handState);
+  const { heroPosition } = detectPositions(handState);
+
+  const toBB = (value) => (bigBlind > 0 ? value / bigBlind : value);
+
+  let result;
+  try {
+    result = PostflopRanges.getAction({
+      holeCards: hole,
+      board: board,
+      potType: potType,
+      aggression: aggression,
+      potBB: toBB(pot),
+      betToCallBB: toBB(betToCall),
+      effectiveStackBB: toBB(heroStack) || 100,
+      position: heroPosition,
+      numPlayers: parseInt(handState.numPlayers, 10) || 2,
+      iterations: 6000
+    });
+  } catch (e) {
+    console.warn('[PokerAssistant] Постфлоп-диапазоны:', (e && e.message) || e);
+    return null;
+  }
+  if (!result || !result.action) return null;
+
+  let amount = 0;
+  if (result.action === 'RAISE') {
+    if (result.amountFactor) amount = pot * result.amountFactor;
+    else if (result.sizingBB) amount = Number(result.sizingBB) * (bigBlind > 0 ? bigBlind : 1);
+    if (amount <= 0) amount = Math.max(pot * 0.6, betToCall * 2, 1);
+    if (heroStack > 0 && amount > heroStack) amount = heroStack;
+    amount = Math.round(amount * 100) / 100;
+  }
+
+  const totalPot = pot + betToCall;
+  const potOdds = totalPot > 0 ? (betToCall / totalPot * 100) : 0;
+  const equity = Number(result.equity) || 0;
+
+  return {
+    hand_id: null,
+    street: detectStreet(handState),
+    decision: {
+      action: result.action,
+      amount: amount,
+      reason: (result.reason || '') + (result.rangeName ? ' [' + result.rangeName + ']' : ''),
+      winRate: equity.toFixed(1),
+      potOdds: potOdds.toFixed(1),
+      source: 'ranges'
+    },
+    equity: equity.toFixed(1),
+    equity_source: 'range',
+    hand: normalizeHandCards(hole[0], hole[1]),
+    rangeName: result.rangeName || '',
+    position: heroPosition
+  };
 }
 
 // ===== MAIN ANALYSIS =====
 
 /**
- * Main analysis function using PokerSkill + GigaChat
- * with real equity (GTO/Monte Carlo) and pot odds
+ * Решение только локальное: префлоп-чарты, постфлоп против диапазона,
+ * а если карт не хватает — Монте-Карло и pot odds.
  */
-async function analyzeHandWithPokerSkill(handState) {
+async function analyzeHand(handState) {
   const street = detectStreet(handState);
 
   const pot = Number(handState.pot) || 0;
   const betToCall = Number(handState.betToCall) || 0;
-  const numPlayers = Math.min(Math.max(parseInt(handState.numPlayers, 10) || 2, 2), 6);
   const totalPot = pot + betToCall;
   const potOdds = totalPot > 0 ? (betToCall / totalPot * 100) : 0;
 
   const { equity, source, hand } = computeEquity(handState);
+  const handId = ++handCounter;
 
-  if (!GIGACHAT_API_KEY || gigachatDown) {
-    const decision = buildFallbackDecision(handState);
-    return {
-      hand_id: ++handCounter,
-      street,
-      decision,
-      potOdds: potOdds.toFixed(1),
-      equity: equity.toFixed(1),
-      equity_source: source,
-      hand: hand || '',
-      state: responseState(handState),
-      readingWarning: cardsWarning(handState)
-    };
-  }
-
-  // Determine hero position
-  const heroPosition = numPlayers >= 6 ? 'EP' : (numPlayers >= 4 ? 'MP' : 'BB');
-
-  // Build legal actions
-  const legalActions = buildLegalActions(street, betToCall);
-
-  // Build action history
-  const actionHistory = detectActionHistory(handState);
-
-  const bigBlind = Number(handState.bigBlind) || 0;
-  const heroStack = Number(handState.heroStack) > 0 ? Number(handState.heroStack) : 200;
-  const villainStack = Number(handState.villainStack) > 0 ? Number(handState.villainStack) : 200;
-
-  // Create PokerSkill game state (values in BB)
-  const gameState = {
-    hand_id: ++handCounter,
-    street: street,
-    hero_hole_cards: formatCardsForPokerSkill(handState.myCards),
-    board_cards: formatCardsForPokerSkill(handState.communityCards),
-    pot: toBB(totalPot, bigBlind) || 2.5,
-    total_pot: toBB(totalPot, bigBlind) || 2.5,
-    hero_stack: toBB(heroStack, bigBlind),
-    villain_stack: toBB(villainStack, bigBlind),
-    hero_position: heroPosition,
-    legal_actions: legalActions,
-    raise_min: legalActions.includes('b') ? toBB(betToCall * 2 || pot * 0.5, bigBlind) : null,
-    raise_max: legalActions.includes('b') ? toBB(heroStack, bigBlind) : null,
-    action_history: actionHistory,
-    pot_odds: potOdds.toFixed(1),
-    equity: equity.toFixed(1),
-    equity_source: source,
-    use_skills: true
-  };
-
-  // Generate PokerSkill prompt
-  const prompt = PokerSkillPromptBuilder.generatePrompt(gameState);
-
-  console.log(`[PokerSkill] Hand #${gameState.hand_id} (${street}) equity=${equity}% (${source}) potOdds=${potOdds.toFixed(1)}%`);
-
-  let llmResponse;
-  try {
-    llmResponse = await gigachat.chat(
-      gameState.hand_id,
-      prompt.system_prompt,
-      prompt.user_prompt
-    );
-  } catch (error) {
-    const msg = String((error && error.message) || error);
-    if (/failed to fetch|networkerror|err_cert|err_connection|err_name_not_resolved/i.test(msg)) {
-      gigachatDown = true;
+  if (street === 'preflop') {
+    const rangeDecision = buildPreflopRangeDecision(handState);
+    if (rangeDecision) {
+      rangeDecision.hand_id = handId;
+      rangeDecision.state = responseState(handState);
+      rangeDecision.readingWarning = cardsWarning(handState);
+      console.log(`[PokerAssistant] Префлоп по диапазонам: ${rangeDecision.hand} ${rangeDecision.position} → ${rangeDecision.decision.action}`);
+      return rangeDecision;
     }
-    const fb = buildFallbackDecision(handState);
-    return {
-      hand_id: gameState.hand_id,
-      street,
-      decision: fb,
-      potOdds: potOdds.toFixed(1),
-      equity: equity.toFixed(1),
-      equity_source: source,
-      hand: hand || '',
-      state: responseState(handState),
-      readingWarning: cardsWarning(handState)
-    };
+  } else {
+    const postflopDecision = buildPostflopRangeDecision(handState);
+    if (postflopDecision) {
+      postflopDecision.hand_id = handId;
+      postflopDecision.state = responseState(handState);
+      postflopDecision.readingWarning = cardsWarning(handState);
+      console.log(`[PokerAssistant] Постфлоп по диапазонам: эквити ${postflopDecision.equity}% → ${postflopDecision.decision.action}`);
+      return postflopDecision;
+    }
   }
 
-  // Parse LLM response
-  let actionResult;
-  try {
-    actionResult = gigachat.parseAction(llmResponse);
-  } catch (error) {
-    console.warn('[PokerSkill] Action parse failed, using fallback:', error);
-    const fb = buildFallbackDecision(handState);
-    return {
-      hand_id: gameState.hand_id,
-      street,
-      decision: fb,
-      llm_response: llmResponse,
-      potOdds: potOdds.toFixed(1),
-      state: responseState(handState),
-      readingWarning: cardsWarning(handState)
-    };
-  }
-
-  // Determine decision with real equity
-  const decision = buildDecision(actionResult, potOdds, street, equity, legalActions, betToCall);
-
-  console.log(`[PokerSkill] Decision: ${JSON.stringify(decision)}`);
-
+  const decision = buildFallbackDecision(handState);
   return {
-    hand_id: gameState.hand_id,
-    street: street,
-    decision: decision,
-    llm_response: llmResponse,
+    hand_id: handId,
+    street,
+    decision,
     potOdds: potOdds.toFixed(1),
     equity: equity.toFixed(1),
     equity_source: source,
@@ -633,65 +859,31 @@ async function analyzeHandWithPokerSkill(handState) {
 }
 
 /**
- * Build decision from LLM result, validated with real equity/pot odds
- */
-function buildDecision(actionResult, potOdds, street, equity, legalActions, betToCall) {
-  const actionMap = {
-    'FOLD': 'FOLD',
-    'CHECK': 'CHECK',
-    'CALL': 'CALL',
-    'RAISE': 'RAISE'
-  };
-
-  let action = (actionResult && actionMap[actionResult.action]) || 'FOLD';
-  let reason = (actionResult && actionResult.reasoning) || '';
-
-  // Sanity check: don't call a bet when equity is far below pot odds
-  if (betToCall > 0 && action === 'CALL' && equity < potOdds * 0.75 && equity < 25) {
-    action = 'FOLD';
-    reason = `[контроль] Эквити ${equity.toFixed(1)}% ниже pot odds ${potOdds.toFixed(1)}% — фолд вместо колла. ` + reason;
-  }
-
-  // Sanity check: don't raise with very weak equity unless bluffing opportunity
-  if (betToCall > 0 && action === 'RAISE' && equity < potOdds * 0.5) {
-    reason = `[внимание] Слабое эквити (${equity.toFixed(1)}%) для рейза против ставки. ` + reason;
-  }
-
-  let winRate = equity;
-  if (action === 'FOLD') winRate = Math.min(equity, 30);
-
-  if (reason && reason.length > 120) reason = reason.substring(0, 120) + '...';
-
-  return {
-    action: action,
-    amount: (actionResult && actionResult.amount) || 0,
-    reason: reason || `${action} on ${street}`,
-    winRate: winRate.toFixed(1),
-    potOdds: potOdds.toFixed(1),
-    source: 'llm'
-  };
-}
-
-/**
- * Fallback decision based purely on GTO/Monte Carlo math
- * Used when LLM is unavailable or fails
+ * Резерв, когда диапазоны не сработали: эквити и pot odds, без сети.
  */
 function buildFallbackDecision(handState) {
   const street = detectStreet(handState);
   const pot = Number(handState.pot) || 0;
   const betToCall = Number(handState.betToCall) || 0;
   const numPlayers = Math.min(Math.max(parseInt(handState.numPlayers, 10) || 2, 2), 6);
+  // Итоговый банк и цена колла. Если доставлять нечего, pot odds = 0.
   const totalPot = pot + betToCall;
   const potOdds = totalPot > 0 ? (betToCall / totalPot * 100) : 0;
   const { equity } = computeEquity(handState);
+  const heroStack = Number(handState.heroStack) > 0 ? Number(handState.heroStack) : 0;
 
   let action, amount = 0, reason;
 
   if (betToCall === 0) {
+    // Никто не ставил: решаем между ставкой и чеком.
     if (equity >= 60) {
       action = 'RAISE';
       amount = Math.max(pot * 0.75, 1);
-      reason = `Сильная рука (${equity.toFixed(1)}%) — рейз для велью`;
+      reason = `Сильная рука (${equity.toFixed(1)}%) — ставка для велью`;
+    } else if (equity >= 45) {
+      action = 'RAISE';
+      amount = Math.max(pot * 0.5, 1);
+      reason = `Средняя рука (${equity.toFixed(1)}%) — небольшая ставка`;
     } else {
       action = 'CHECK';
       reason = `Эквити ${equity.toFixed(1)}% — чек, контроль банка`;
@@ -699,7 +891,7 @@ function buildFallbackDecision(handState) {
   } else {
     if (equity >= potOdds + 20) {
       action = 'RAISE';
-      amount = Math.max(betToCall * 2.5, 1);
+      amount = Math.max(betToCall * 2.5, pot * 0.75, 1);
       reason = `Эквити ${equity.toFixed(1)}% >> pot odds ${potOdds.toFixed(1)}% — рейз`;
     } else if (equity >= potOdds * 0.75) {
       action = 'CALL';
@@ -710,14 +902,22 @@ function buildFallbackDecision(handState) {
     }
   }
 
+  // Нельзя ставить больше стека.
+  if (action === 'RAISE') {
+    if (heroStack > 0 && amount > heroStack) amount = heroStack;
+    amount = Math.round(amount * 100) / 100;
+  } else {
+    amount = 0;
+  }
+
   return {
     action: action,
     amount: amount,
     reason: reason + ` (${numPlayers} игроков, ${street})`,
-    winRate: equity.toFixed(1),
+    winRate: (action === 'FOLD' ? Math.min(equity, 30) : equity).toFixed(1),
     potOdds: potOdds.toFixed(1),
     source: 'fallback'
   };
 }
 
-console.log('Poker Assistant: Background loaded with PokerSkill + GigaChat + GTO/Monte Carlo');
+console.log('Poker Assistant: Background loaded with префлоп-диапазоны + постфлоп-диапазоны + Monte Carlo');

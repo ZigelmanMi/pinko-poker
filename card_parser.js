@@ -290,6 +290,8 @@
     if (cards && cards.length >= 2) return 'active';
     return 'active';
   }
+
+  class PokerCardParserCore {
     constructor(opts) {
       this.opts = opts || {};
     }
@@ -342,10 +344,25 @@
         add(els[i], parseCardFromElement(els[i]));
       }
 
-      // Real table cards are often a CSS class (no "card" in the name)
-      // with an SVG data-URI computed background, or a child <svg>.
-      var boxes = document.querySelectorAll('div, span, img');
-      for (var b = 0; b < boxes.length; b++) {
+      // Настоящие карты часто лежат в блоке без слова "card" в классе — у них
+      // SVG-фон или дочерний <svg>. Раньше здесь перебирался ВЕСЬ документ
+      // (div, span, img): на большом DOM это тысячи getBoundingClientRect
+      // каждые 2 секунды, то есть постоянные пересчёты layout.
+      // Теперь берём только реальных кандидатов: элементы с SVG-фоном или
+      // с дочерним <svg>, плюс ограниченный запас по «безымянным» блокам
+      // внутри игровых контейнеров.
+      var candidateSelectors = [
+        '[style*="svg+xml"]',
+        '[style*="background-image"]',
+        '.r-table-cards *', '.PixiComponent *', '.r-scene-container *',
+        'svg', 'img'
+      ].join(',');
+      var boxes;
+      try { boxes = document.querySelectorAll(candidateSelectors); } catch (e5) { boxes = []; }
+      // Страховка: если кандидатов слишком много (например, тяжёлый DOM),
+      // ограничиваем работу, чтобы не блокировать кадр.
+      var maxBoxes = 1500;
+      for (var b = 0; b < boxes.length && b < maxBoxes; b++) {
         var el = boxes[b];
         var rect;
         try { rect = el.getBoundingClientRect(); } catch (e3) { continue; }
@@ -646,6 +663,8 @@
           gl: (shot && shot.error) || (br && br.gl),
           shotBoxes: shot && shot.boxes,
           shotReads: shot && shot.reads,
+          // Телеметрия экономии: сколько раз скриншот не понадобился.
+          shotStats: window.__paShotStats || null,
           rCard: document.querySelectorAll('.r-card').length,
           players: this.getPlayersInfo()
         }
@@ -653,180 +672,8 @@
     }
   }
 
-  var ACTION_COLORS = {
-    'RAISE': '#ff5252',
-    'CALL': '#4caf50',
-    'CHECK': '#40c4ff',
-    'FOLD': '#ff9800'
-  };
 
-  function formatCards(cards) {
-    if (!cards || cards.length === 0) return '—';
-    return cards.map(function (c) { return c.rank + c.suit; }).join(' ');
-  }
-
-  function buildOverlayHTML(response) {
-    var decision = response.decision || {};
-    var street = response.street || 'unknown';
-    var color = ACTION_COLORS[decision.action] || '#ffffff';
-    var state = response.state || {};
-
-    var stackTxt = state.heroStack != null && state.heroStack > 0
-      ? '$' + Number(state.heroStack).toFixed(2) : '—';
-    var nameTxt = state.heroName ? ' (' + state.heroName + ')' : '';
-    var stateBlock =
-      '<div class="pa-state">' +
-        '<div class="pa-state-title">📡 Прочитано из игры</div>' +
-        '<div class="pa-state-row">🂡 Мои карты: <b>' + formatCards(state.myCards) + '</b></div>' +
-        '<div class="pa-state-row">🃏 Доска: <b>' + formatCards(state.communityCards) + '</b></div>' +
-        '<div class="pa-state-row">💰 Банк: <b>' + (state.pot != null ? '$' + Number(state.pot).toFixed(2) : '—') +
-        '</b> · Ставка: <b>' + (state.betToCall != null ? '$' + Number(state.betToCall).toFixed(2) : '—') + '</b></div>' +
-        '<div class="pa-state-row">👛 Стек' + nameTxt + ': <b>' + stackTxt + '</b></div>' +
-      '<div class="pa-state-row">👥 В игре: <b>' + (state.numPlayers || '—') +
-      '</b>' + (state.numSeated && state.numSeated !== state.numPlayers ? ' · за столом: ' + state.numSeated : '') +
-      ' · Улица: <b>' + street + '</b></div>' +
-        (response.readingWarning ? '<div class="pa-warning">⚠️ ' + response.readingWarning + '</div>' : '') +
-      '</div>';
-
-    var sourceBadge = decision.source === 'fallback'
-      ? '<span class="pa-badge pa-badge-fallback">⚙️ GTO/Monte Carlo</span>'
-      : '<span class="pa-badge pa-badge-llm">🤖 GigaChat</span>';
-
-    return '' +
-      '<div class="pa-header">🃏 Poker Assistant <span class="pa-version">v3.3.15</span></div>' +
-      stateBlock +
-      '<div class="pa-street">Улица: ' + street + ' ' + sourceBadge + '</div>' +
-      '<div class="pa-recommendation" style="color: ' + color + ';">' + decision.action + '</div>' +
-      '<div class="pa-details">' +
-        '<div>📊 Эквити (шанс выиграть): ~' + (decision.winRate != null ? decision.winRate : '—') + '%</div>' +
-        '<div>💰 Pot Odds (цена колла): ' + (decision.potOdds != null ? decision.potOdds : '—') + '%</div>' +
-        '<div>📈 ' + (decision.reason || '') + '</div>' +
-      '</div>' +
-      (response.llm_response ? '<div class="pa-reasoning">🤖 ' + response.llm_response.substring(0, 300) + '</div>' : '') +
-      '<div class="pa-footer">Tab — ручной ввод · PokerSkill + GigaChat</div>';
-  }
-
-  function makeDraggable(element) {
-    var pos1 = 0, pos2 = 0, pos3 = 0, pos4 = 0;
-    var header = element.querySelector('.pa-header');
-    (header || element).onmousedown = dragMouseDown;
-
-    function dragMouseDown(e) {
-      e = e || window.event;
-      e.preventDefault();
-      pos3 = e.clientX;
-      pos4 = e.clientY;
-      document.onmouseup = closeDragElement;
-      document.onmousemove = elementDrag;
-    }
-    function elementDrag(e) {
-      e = e || window.event;
-      e.preventDefault();
-      pos1 = pos3 - e.clientX;
-      pos2 = pos4 - e.clientY;
-      pos3 = e.clientX;
-      pos4 = e.clientY;
-      element.style.top = (element.offsetTop - pos2) + 'px';
-      element.style.left = (element.offsetLeft - pos1) + 'px';
-    }
-    function closeDragElement() {
-      document.onmouseup = null;
-      document.onmousemove = null;
-    }
-  }
-
-  function ensurePanel(doc) {
-    doc = doc || document;
-    var oldHud = doc.getElementById('poker-assistant-hud');
-    if (oldHud) oldHud.remove();
-    var panel = doc.getElementById('poker-assistant-panel');
-    if (panel) return panel;
-    panel = doc.createElement('div');
-    panel.id = 'poker-assistant-panel';
-    panel.innerHTML =
-      '<div class="pa-header">🃏 Poker Assistant <span class="pa-version">v3.3.15</span></div>' +
-      '<div id="pa-live" class="pa-state"><div class="pa-state-title">📡 Читаю стол…</div></div>' +
-      '<div id="pa-rec" class="pa-rec-wait">Рекомендация появится, когда будут карты</div>';
-    doc.body.appendChild(panel);
-    makeDraggable(panel);
-    return panel;
-  }
-
-  function updateLive(state, extra, doc) {
-    doc = doc || document;
-    extra = extra || {};
-    var panel = ensurePanel(doc);
-    var live = panel.querySelector('#pa-live');
-    if (!live) return;
-    var stackTxt = state.heroStack != null && Number(state.heroStack) > 0
-      ? '$' + Number(state.heroStack).toFixed(2) : '—';
-    var nameTxt = state.heroName ? ' (' + state.heroName + ')' : '';
-    live.innerHTML =
-      '<div class="pa-state-title">📡 Прочитано из игры</div>' +
-      '<div class="pa-state-row">🂡 Мои карты: <b>' + formatCards(state.myCards) + '</b></div>' +
-      '<div class="pa-state-row">🃏 Доска: <b>' + formatCards(state.communityCards) + '</b></div>' +
-      '<div class="pa-state-row">💰 Банк: <b>$' + Number(state.pot || 0).toFixed(2) +
-      '</b> · Ставка: <b>$' + Number(state.betToCall || 0).toFixed(2) + '</b></div>' +
-      '<div class="pa-state-row">👛 Стек' + nameTxt + ': <b>' + stackTxt + '</b></div>' +
-      '<div class="pa-state-row">👥 В игре: <b>' + (state.numPlayers || '—') +
-      '</b>' + (state.numSeated && state.numSeated !== state.numPlayers ? ' · за столом: ' + state.numSeated : '') +
-      ' · Улица: <b>' + (state.stage || extra.street || '?') + '</b>' +
-      (state._raw && state._raw.source ? ' · src: ' + state._raw.source : '') +
-      (state._raw && state._raw.shotBoxes != null ? ' · boxes: ' + state._raw.shotBoxes : '') +
-      (state._raw && state._raw.shotReads != null ? ' · reads: ' + state._raw.shotReads : '') +
-      (state._raw && state._raw.gl ? ' · ' + state._raw.gl : '') + '</div>' +
-      (extra.warning ? '<div class="pa-warning">⚠️ ' + extra.warning + '</div>' : '');
-  }
-
-  function showOverlay(response, doc) {
-    doc = doc || document;
-    var panel = ensurePanel(doc);
-    var fading = doc.getElementById('poker-assistant-overlay');
-    if (fading) fading.remove();
-
-    if (response && response.state) {
-      updateLive(response.state, {
-        street: response.street,
-        warning: response.readingWarning || response.error
-      }, doc);
-    }
-
-    var rec = panel.querySelector('#pa-rec');
-    if (!rec) return;
-    var decision = (response && response.decision) || {};
-    if (!decision.action) {
-      rec.className = 'pa-rec-wait';
-      rec.innerHTML = response && response.error
-        ? '⚠️ ' + response.error + ' — считаю по GTO…'
-        : 'Считаю рекомендацию…';
-      return;
-    }
-    var color = ACTION_COLORS[decision.action] || '#ffffff';
-    var sourceBadge = decision.source === 'fallback'
-      ? '<span class="pa-badge pa-badge-fallback">⚙️ GTO/Monte Carlo</span>'
-      : '<span class="pa-badge pa-badge-llm">🤖 GigaChat</span>';
-    rec.className = 'pa-rec';
-    rec.innerHTML =
-      '<div class="pa-street">Улица: ' + (response.street || '?') + ' ' + sourceBadge + '</div>' +
-      '<div class="pa-recommendation" style="color:' + color + ';">' + decision.action + '</div>' +
-      '<div class="pa-details">' +
-        '<div>📊 Эквити (шанс выиграть): ~' + (decision.winRate != null ? decision.winRate : '—') + '%</div>' +
-        '<div>💰 Pot Odds (цена колла): ' + (decision.potOdds != null ? decision.potOdds : '—') + '%</div>' +
-        '<div>📈 ' + (decision.reason || '') + '</div>' +
-      '</div>' +
-      (response.llm_response ? '<div class="pa-reasoning">🤖 ' + String(response.llm_response).substring(0, 240) + '</div>' : '');
-  }
-
-  function showDead(doc) {
-    doc = doc || document;
-    var panel = ensurePanel(doc);
-    var rec = panel.querySelector('#pa-rec');
-    if (rec) {
-      rec.className = 'pa-rec-wait';
-      rec.innerHTML = '⚠️ Расширение перезагрузилось. Обновите страницу (F5), затем кликните иконку.';
-    }
-  }
-
+  // Публичные экспорты для content_iframe.js и тестов.
   window.PokerCardParserCore = PokerCardParserCore;
   window.PokerParseUtils = {
     parseCardFromSVG: parseCardFromSVG,
@@ -835,12 +682,6 @@
     decodeBase64Utf8: decodeBase64Utf8,
     inferSuitFromSvg: inferSuitFromSvg
   };
-  window.PokerAssistantUI = {
-    showOverlay: showOverlay,
-    buildOverlayHTML: buildOverlayHTML,
-    updateLive: updateLive,
-    ensurePanel: ensurePanel,
-    showDead: showDead
-  };
-  console.log('[PokerAssistant] Shared parser v3.3.15 loaded');
+
+  console.log('[PokerAssistant] Shared parser v3.5.0 loaded');
 })();
