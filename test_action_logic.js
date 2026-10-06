@@ -1,12 +1,3 @@
-// =====================================================================
-// test_action_logic.js — проверка локального выбора действия
-//
-// Запуск:  node test_action_logic.js
-//
-// Файлы расширения — это скрипты для браузера (importScripts, chrome.*),
-// поэтому они загружаются в изолированный контекст через vm, а окружение
-// браузера подменяется заглушками. Так логику можно проверять из Node.
-// =====================================================================
 'use strict';
 
 const fs = require('fs');
@@ -38,7 +29,6 @@ function read(name) {
   return fs.readFileSync(path.join(dir, name), 'utf8');
 }
 
-// ---------------------------------------------------------------- стенд
 function makeSandbox() {
   const listeners = { message: [], storage: [], tabsUpdated: [], nav: [], removed: [] };
   const sandbox = {
@@ -127,10 +117,7 @@ function loadBackground() {
   return sandbox.__bg;
 }
 
-// ------------------------------------------------------------------ 0. загрузка модулей
-// Это ровно тот путь, которым сервис-воркер грузит свои скрипты. Если хоть один
-// модуль не найдётся или бросит исключение при загрузке — расширение не стартует,
-// и никакие тесты логики уже не важны. Поэтому проверяем в самом начале.
+// грузим скрипты как service worker: один упавший модуль — расширение мёртвое.
 console.log('\n0. Загрузка цепочки модулей (как в service worker)');
 (function moduleChain() {
   const { sandbox } = makeSandbox();
@@ -179,7 +166,6 @@ function state(over) {
   }, over || {});
 }
 
-// ---------------------------------------------------------------- 4. фолбэк-математика
 console.log('\n4. Математический фолбэк (buildFallbackDecision)');
 
 (function fallbackMath() {
@@ -206,7 +192,6 @@ console.log('\n4. Математический фолбэк (buildFallbackDecisi
   eq('каре тузов против ставки -> рейз', nuts.action, 'RAISE');
 })();
 
-// ---------------------------------------------------------------- 5. эквити
 console.log('\n5. Расчёт эквити (computeEquity)');
 
 (function equity() {
@@ -228,7 +213,6 @@ console.log('\n5. Расчёт эквити (computeEquity)');
   eq('без карт источник none', noCards.source, 'none');
 })();
 
-// ---------------------------------------------------------------- 6. улицы
 console.log('\n6. Определение улицы (detectStreet)');
 eq('префлоп', bg.detectStreet({ communityCards: [] }), 'preflop');
 eq('флоп', bg.detectStreet({ communityCards: [1, 2, 3] }), 'flop');
@@ -236,13 +220,11 @@ eq('терн', bg.detectStreet({ communityCards: [1, 2, 3, 4] }), 'turn');
 eq('ривер', bg.detectStreet({ communityCards: [1, 2, 3, 4, 5] }), 'river');
 eq('по stage', bg.detectStreet({ communityCards: [], stage: 'turn' }), 'turn');
 
-// ---------------------------------------------------------------- 7. нормализация руки
 console.log('\n7. Нормализация карманных карт');
 eq('AKs', bg.normalizeHandCards({ rank: 'A', suit: 's' }, { rank: 'K', suit: 's' }), 'AKs');
 eq('AKo', bg.normalizeHandCards({ rank: 'K', suit: 'h' }, { rank: 'A', suit: 's' }), 'AKo');
 eq('пара TT', bg.normalizeHandCards({ rank: 'T', suit: 'h' }, { rank: 'T', suit: 's' }), 'TT');
 
-// ---------------------------------------------------------------- 8. позиции
 console.log('\n8. Определение позиций (detectPositions)');
 
 eq('хедз-ап, банк блайндов, без ставки -> герой BTN',
@@ -275,7 +257,6 @@ eq('3-max, банк блайндов -> герой BTN',
 eq('5-max, банк блайндов -> герой MP',
   bg.detectPositions(state({ numPlayers: 5, betToCall: 0, pot: 3 })).heroPosition, 'MP');
 
-// ---------------------------------------------------------------- 9. префлоп по диапазонам
 console.log('\n9. Префлоп-решение по диапазонам');
 
 (function preflopRanges() {
@@ -344,7 +325,6 @@ bg.analyzeHand(state({
   check('analyzeHand без исключений', false, String(e && e.message));
 });
 
-// ---------------------------------------------------------------- 10. постфлоп против диапазона
 console.log('\n10. Постфлоп: эквити против диапазона');
 
 (function postflopRanges() {
@@ -411,7 +391,6 @@ bg.analyzeHand(state({
   check('analyze на флопе без исключений', false, String(e && e.message));
 });
 
-// ---------------------------------------------------------------- итог
 // Ждём завершения асинхронных проверок, затем печатаем итог.
 setImmediate(function finish() {
   console.log('\n' + '='.repeat(58));

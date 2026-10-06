@@ -1,19 +1,3 @@
-// =====================================================================
-// test_frame_diff.js — проверка модуля сравнения кадров (frame_diff.js)
-//
-// Запуск:  node test_frame_diff.js
-//
-// Проверяется ровно то, от чего зависит фильтр «не отправлять тот же кадр»:
-//   1. одинаковые кадры дают hamming 0;
-//   2. мелкий шум ±2 не мешает (isSame === true);
-//   3. заметный сдвиг картинки ломает совпадение (isSame === false);
-//   4. белый и чёрный кадры различаются (чистый dhash их бы склеил);
-//   5. градиент слева-направо и справа-налево различаются (направление);
-//   6. уменьшение кадра работает и не портит крайние значения;
-//   7. toGray даёт правильное соотношение яркостей R/G/B;
-//   8. хеш детерминирован (10 прогонов -> один результат);
-//   9. производительность: 1600x900 укладывается в 50 мс.
-// =====================================================================
 'use strict';
 
 const FrameDiff = require('./frame_diff.js');
@@ -36,8 +20,6 @@ function eq(name, actual, expected, tol) {
   const ok = tol != null ? Math.abs(actual - expected) <= tol : actual === expected;
   check(name, ok, 'получено ' + actual + ', ожидалось ' + expected + (tol != null ? ' ±' + tol : ''));
 }
-
-// ------------------------------------------------------------ генераторы кадров
 
 /** Сплошная заливка RGBA размером w x h. */
 function solid(w, h, r, g, b, a) {
@@ -152,7 +134,6 @@ const W = 800;
 const H = 450;const base = tableLike(W, H, 80, 60, 12345);
 const baseHash = FrameDiff.dhashFromRgba(base, W, H, { downscale: 320 });
 
-// ------------------------------------------------------- 1. одинаковые кадры
 console.log('\n1. Одинаковые кадры');
 {
   const copy = new Uint8ClampedArray(base); // побайтовая копия того же кадра
@@ -172,7 +153,6 @@ console.log('\n1. Одинаковые кадры');
   check('оба пути считают кадры одинаковыми', FrameDiff.isSame(grayHash, baseHash) === true, 'hamming ' + grayDiff);
 }
 
-// ------------------------------------------------------------- 2. мелкий шум
 console.log('\n2. Шум ±2 на каждый пиксель');
 {
   const noisy = addNoise(base, 2, 777);
@@ -188,7 +168,6 @@ console.log('\n2. Шум ±2 на каждый пиксель');
   check('шум ±4: isSame === true', FrameDiff.isSame(baseHash, FrameDiff.dhashFromRgba(noisy4, W, H, { downscale: 320 })) === true, 'hamming ' + d4);
 }
 
-// --------------------------------------------------------- 3. сдвиг картинки
 console.log('\n3. Сдвиг кадра на 5% по горизонтали');
 {
   const shifted = shiftX(base, W, H, Math.round(W * 0.05));
@@ -204,7 +183,6 @@ console.log('\n3. Сдвиг кадра на 5% по горизонтали');
   check('другой кадр: isSame === false', FrameDiff.isSame(baseHash, FrameDiff.dhashFromRgba(other, W, H, { downscale: 320 })) === false, 'hamming ' + dOther);
 }
 
-// ------------------------------------------------------- 4. белое и чёрное
 console.log('\n4. Полностью белый и полностью чёрный кадры');
 {
   const white = FrameDiff.dhashFromRgba(solid(400, 300, 255, 255, 255), 400, 300, { downscale: 320 });
@@ -216,7 +194,6 @@ console.log('\n4. Полностью белый и полностью чёрны
   check('белый и чёрный: isSame === false', FrameDiff.isSame(white, black) === false, 'hamming ' + d);
 }
 
-// -------------------------------------------------- 5. направление градиента
 console.log('\n5. Градиент слева-направо против справа-налево');
 {
   const lr = FrameDiff.dhashFromRgba(gradient(400, 300, false), 400, 300, { downscale: 320 });
@@ -227,7 +204,6 @@ console.log('\n5. Градиент слева-направо против спр
   check('направление градиента: isSame === false', FrameDiff.isSame(lr, rl) === false, 'hamming ' + d);
 }
 
-// ------------------------------------------------------------ 6. downscaleRgba
 console.log('\n6. Уменьшение кадра (downscaleRgba)');
 {
   const big = solid(1600, 900, 255, 255, 255);
@@ -264,7 +240,6 @@ console.log('\n6. Уменьшение кадра (downscaleRgba)');
   check('непропорциональный кадр: серый остался серым', odd.data[0] === 128 && odd.data[odd.data.length - 4] === 128);
 }
 
-// ------------------------------------------------------------------ 7. toGray
 console.log('\n7. Яркость (toGray)');
 {
   const gRed = FrameDiff.toGray(solid(8, 8, 255, 0, 0), 8, 8);
@@ -279,7 +254,6 @@ console.log('\n7. Яркость (toGray)');
   eq('чёрный -> 0', FrameDiff.toGray(solid(4, 4, 0, 0, 0), 4, 4)[0], 0);
 }
 
-// ------------------------------------------------------------ 8. детерминизм
 console.log('\n8. Детерминированность хеша');
 {
   let same = true;
@@ -300,7 +274,6 @@ console.log('\n8. Детерминированность хеша');
   eq('hamming с самим собой = 0', FrameDiff.hamming(first, first), 0);
 }
 
-// -------------------------------------------------------- 9. производительность
 console.log('\n9. Производительность');
 {
   const frame = tableLike(1600, 900, 80, 60, 31337);
@@ -323,7 +296,6 @@ console.log('\n9. Производительность');
   check('1600x900 без уменьшения укладывается в 200 мс', ms1 < 200, ms1.toFixed(2) + ' мс');
 }
 
-// ------------------------------------------------------------------- итог
 console.log('\n' + '='.repeat(58));
 console.log('Пройдено: ' + passed + ', провалено: ' + failed);
 if (failed) {

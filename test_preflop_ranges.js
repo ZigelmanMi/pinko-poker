@@ -1,19 +1,3 @@
-// =====================================================================
-// test_preflop_ranges.js — проверка префлоп-модели диапазонов
-//
-// Запуск:  node test_preflop_ranges.js
-//
-// Что проверяем:
-//   1. нормализацию ключа руки (169-нотация);
-//   2. разбор нотации диапазонов ('22+', 'A2s+', '22-99', 'T9s-54s');
-//   3. целостность чартов (все руки существуют, нет опечаток);
-//   4. базовые инварианты решений (AA, 72o, betToCall=0 -> не CALL);
-//   5. заполненность диапазонов в заявленных пределах + монотонность;
-//   6. короткий стек (пуш/фолд через эквити);
-//   7. размеры рейзов (положительные, не больше стека, соответствуют
-//      формуле 2.5 / 3x / 4x / 2.2x);
-//   8. валидацию ввода и стабильность миксов.
-// =====================================================================
 'use strict';
 
 const PreflopRanges = require('./preflop_ranges.js');
@@ -37,7 +21,6 @@ function eq(name, actual, expected) {
   check(name, actual === expected, 'получено ' + JSON.stringify(actual) + ', ожидалось ' + JSON.stringify(expected));
 }
 
-// --- вспомогательное -------------------------------------------------
 
 /** Ключ руки -> две конкретные карты (как их отдаёт парсер стола). */
 function cardsOf(key) {
@@ -63,7 +46,6 @@ const POSITIONS = ['UTG', 'MP', 'CO', 'BTN', 'SB', 'BB'];
 const RAISERS = ['UTG', 'MP', 'CO', 'BTN', 'SB'];
 const SITUATIONS = ['unopened', 'vs_open', 'vs_3bet', 'in_bb_vs_open'];
 
-// ---------------------------------------------------------------- 1. ключи рук
 console.log('\n1. Нормализация ключа руки (169-нотация)');
 
 eq('AKs', PreflopRanges.normalizeHand('Ah', 'Kh'), 'AKs');
@@ -81,7 +63,6 @@ eq('масть в верхнем регистре', PreflopRanges.normalizeHand(
 eq('все 169 ключей генерируются', PreflopRanges.allHandKeys().length, 169);
 check('все 169 ключей уникальны', new Set(PreflopRanges.allHandKeys()).size === 169);
 
-// ---------------------------------------------------------------- 2. parseRange
 console.log('\n2. Разбор нотации диапазонов');
 
 eq('22+ = 13 пар', PreflopRanges.parseRange('22+').length, 13);
@@ -110,7 +91,6 @@ eq('комбо в 22+', PreflopRanges.comboCount('22+'), 78);
 eq('комбо в A2s+', PreflopRanges.comboCount('A2s+'), 48);
 eq('комбо в AKo (12)', PreflopRanges.comboCount('AKo'), 12);
 
-// ---------------------------------------------------------------- 3. целостность чартов
 console.log('\n3. Целостность чартов');
 
 const allKeys = new Set(PreflopRanges.allHandKeys());
@@ -146,7 +126,6 @@ check('getRange отдаёт Set', btnOpen instanceof Set);
 check('getRange по объекту-параметру работает',
   PreflopRanges.getRange({ position: 'BB', situation: 'in_bb_vs_open', action: 'call', raiserPosition: 'BTN' }).has('T9o'));
 
-// ---------------------------------------------------------------- 4. инварианты решений
 console.log('\n4. Инварианты решений');
 
 // 4.1 AA — всегда RAISE (во всех позициях/ситуациях/против любого рейзера).
@@ -217,7 +196,6 @@ eq('BTN против 3-бета с AQs — колл',
 eq('SB против BTN с 72o — фолд',
   act('72o', { position: 'SB', situation: 'vs_open', raiserPosition: 'BTN', betToCallBB: 2.5 }).action, 'FOLD');
 
-// ---------------------------------------------------------------- 5. заполненность
 console.log('\n5. Заполненность диапазонов');
 const RP = PreflopRanges.RANGE_PERCENT;
 console.log('   UTG open ' + RP['UTG open'] + '% | MP ' + RP['MP open'] + '% | CO ' + RP['CO open'] +
@@ -255,7 +233,6 @@ check('3-бет-диапазоны уже диапазона открытия BT
 check('RANGE_PERCENT посчитан для всех открытий',
   POSITIONS.every((p) => typeof RP[p + ' open'] === 'number'));
 
-// ---------------------------------------------------------------- 6. короткий стек
 console.log('\n6. Короткий стек (пуш/фолд)');
 // Симулятор инъектируется явно — тест не зависит от глобального состояния.
 PreflopRanges.setSimulator(new MonteCarloSimulator({ seed: 20240607 }));
@@ -288,7 +265,6 @@ const autoShort = act('AA', { position: 'CO', situation: 'unopened', betToCallBB
 eq('10 ББ с AA (симулятор найден автоматически) — RAISE', autoShort.action, 'RAISE');
 check('автоматический путь тоже считает эквити', autoShort.equity > 70, 'эквити ' + autoShort.equity);
 
-// ---------------------------------------------------------------- 7. размеры
 console.log('\n7. Размеры рейзов');
 
 eq('открытие = 2.5 ББ', act('AA', { position: 'BTN', situation: 'unopened', betToCallBB: 0 }).sizingBB, 2.5);
@@ -328,7 +304,6 @@ for (const stack of [5, 10, 14, 15, 20, 30, 50, 100]) {
 }
 check('размеры рейзов всегда > 0 и <= стек, иначе null', sizeBad.length === 0, sizeBad.slice(0, 5).join('; '));
 
-// ---------------------------------------------------------------- 8. ввод и стабильность
 console.log('\n8. Валидация ввода и стабильность');
 
 let inputThrew = 0;
@@ -365,7 +340,6 @@ for (const hk of ['A5s', 'A4s', 'KJs', 'QTs', 'JTs', '76s', 'AJo', 'KQo']) {
 }
 check('frequency всегда в (0, 1]', freqBad === 0, 'нарушений: ' + freqBad);
 
-// ---------------------------------------------------------------- итог
 console.log('\n' + '='.repeat(58));
 console.log('Пройдено: ' + passed + ', провалено: ' + failed);
 if (failed) {

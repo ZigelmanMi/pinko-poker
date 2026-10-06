@@ -332,7 +332,7 @@
       try { payload = JSON.parse(payload); } catch (e) { payload = null; }
     }
     if (payload && typeof payload === 'object') harvest(payload, acc, 0, new WeakSet());
-    // Only keep explicitly named hole/board strings — never random JSON fragments.
+    // только явные строки карт, не случайные куски json
     if (acc.myCards && acc.myCards.length >= 2) {
       lastWs.myCards = acc.myCards.slice(0, 2);
       lastWs.hits++;

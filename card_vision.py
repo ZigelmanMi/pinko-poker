@@ -54,7 +54,6 @@ _LOADED = False
 TPL_SIZE = (32, 44)
 
 
-# ---------- geometry helpers ----------
 def _norm_ink(roi, size=TPL_SIZE):
     if roi is None or roi.size == 0:
         return None
@@ -75,7 +74,7 @@ def _count_holes(roi):
 
 
 def _hole_cy(roi):
-    """Relative Y (0=top) of the first interior hole, or None."""
+    """Y первой дырки, 0 сверху. Нет дырки — None."""
     if roi is None or roi.size == 0:
         return None
     cnts, hier = cv2.findContours(roi, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
@@ -90,9 +89,8 @@ def _hole_cy(roi):
     return None
 
 
-# ---------- ink extraction ----------
 def extract_ink(bgr):
-    """Return (ink_mask, face_mask) for a BGR crop of one card."""
+    """Маска чернил и белого лица карты."""
     gray = cv2.cvtColor(bgr, cv2.COLOR_BGR2GRAY)
     _, white = cv2.threshold(gray, 190, 255, cv2.THRESH_BINARY)
     cnts, _ = cv2.findContours(white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -126,7 +124,7 @@ def _ink_blobs(ink, min_area=12):
 
 
 def _merge_ten_blobs(ink, blobs):
-    """Pinco '10' is a thin '1' glued to a holed '0' on the same row."""
+    """Десятка: тонкая 1 и 0 с дыркой в одном ряду."""
     if len(blobs) < 2:
         return blobs
     top_y = min(b['y'] for b in blobs)
@@ -187,7 +185,7 @@ def _is_ten_rank(ink, rank_blob):
 
 
 def split_rank_suit(ink):
-    """Pick rank (topmost glyph) and suit (largest remaining blob)."""
+    """Ранг — верхний глиф, масть — самый крупный из оставшихся."""
     blobs = _merge_ten_blobs(ink, _ink_blobs(ink))
     if not blobs:
         return None, None
@@ -195,7 +193,7 @@ def split_rank_suit(ink):
     rest = blobs[1:]
     if not rest:
         return rank, None
-    # Prefer a blob below the rank (index suit or center pip)
+    # масть обычно под рангом
     below = [b for b in rest if b['y'] >= rank['y'] + rank['h'] * 0.4]
     pool = below or rest
     suit = max(pool, key=lambda b: b['area'])
@@ -211,7 +209,6 @@ def _crop_blob(mask, blob, pad=2):
     return mask[y0:y1, x0:x1]
 
 
-# ---------- templates ----------
 def _render_font_rank(ch, font_path, size=52):
     try:
         font = ImageFont.truetype(font_path, size)
@@ -287,7 +284,7 @@ def _load_templates():
 
 
 def save_rank_template(rank, roi):
-    """Store a newly read rank glyph so later hands match faster."""
+    """Запомнить глиф, следующий стол узнаётся быстрее."""
     rank = 'T' if rank == '10' else str(rank).upper()
     if rank not in RANKS:
         return
@@ -302,7 +299,6 @@ def save_rank_template(rank, roi):
     _RANK_TEMPLATES.append((rank, f'live:{rank}', arr))
 
 
-# ---------- rank / suit classifiers ----------
 def classify_rank(ink, rank_blob):
     if rank_blob is None:
         return None, 0.0, 'none'
@@ -320,7 +316,7 @@ def classify_rank(ink, rank_blob):
     for rank, src, tpl in _load_templates():
         if holes not in RANK_HOLES.get(rank, (holes,)):
             continue
-        # 6 has the bowl at the bottom; 9 has it at the top
+        # у 6 чаша снизу, у 9 сверху
         if hole_y is not None:
             if rank == '6' and hole_y < 0.40:
                 continue
@@ -331,7 +327,7 @@ def classify_rank(ink, rank_blob):
             val = float(res.max())
         except cv2.error:
             continue
-        # real crops beat generated fonts when scores are close
+        # живой кроп важнее шрифта, если счёт близкий
         if src.startswith('file:') or src.startswith('live:'):
             val = min(1.0, val + 0.06)
         if val > scores.get(rank, -1):
@@ -385,25 +381,20 @@ def classify_suit(bgr, ink, suit_blob):
     top_w, bot_w, max_y, sol = feat['top_w'], feat['bot_w'], feat['max_y'], feat['solidity']
 
     if is_red:
-        # Heart is wide at the top (two lobes); diamond is pointed both ends.
+        # черва широкая сверху, бубна острая с обоих концов
         if top_w > 0.55 or max_y < 0.32:
             return 'h', 0.9
         return 'd', 0.88
 
-    # Club is less convex (3 lobes) and fairly even top/bottom.
-    # Spade is pointed at the top and has a stem.
+    # трефа ровнее, пика острая сверху и со стеблем
     even = abs(top_w - bot_w) < 0.16
     if sol < 0.86 or (top_w > 0.34 and even and max_y > 0.45):
         return 'c', 0.86
     return 's', 0.86
 
 
-# ---------- public API ----------
 def read_card(pil_img, region, pad=5):
-    """Read rank+suit from a card rectangle on a PIL RGB image.
-
-    Returns dict: rank, suit, method, conf, read
-    """
+    """Ранг и масть с прямоугольника карты."""
     W, H = pil_img.size
     x0 = max(0, int(region['x']) - pad)
     y0 = max(0, int(region['y']) - pad)
@@ -436,7 +427,7 @@ def read_card_bgr(bgr):
 
 
 def detect_card_regions(img):
-    """White rounded-rect cards. `img` is a PIL RGB image."""
+    """Белые карты на скрине."""
     arr = np.array(img.convert('RGB'))
     gray = cv2.cvtColor(arr, cv2.COLOR_RGB2GRAY)
     W, H = img.size
@@ -456,12 +447,12 @@ def detect_card_regions(img):
             patch = arr[y:y + h, x:x + w]
             if patch.size == 0:
                 continue
-            # must be a bright (white) face, not a blue card-back
+            # белое лицо, не синяя рубашка
             mean = patch.reshape(-1, 3).mean(axis=0)
             if mean.mean() < 170:
                 continue
             if mean[2] > mean[0] + 25 and mean[2] > mean[1] + 15:
-                continue  # mostly blue
+                continue  # синяя рубашка
             mask = np.zeros_like(gray)
             cv2.drawContours(mask, [c], -1, 255, -1)
             fill = cv2.countNonZero(mask[y:y + h, x:x + w]) / max(w * h, 1)
@@ -469,8 +460,7 @@ def detect_card_regions(img):
                 continue
             found.append((t, x, y, w, h))
 
-    # Keep the largest box per location. Highest-threshold contours are
-    # often just the bright top of the card and cut the suit off.
+    # берём самый большой прямоугольник: высокий порог часто отрезает масть
     found.sort(key=lambda r: (-(r[3] * r[4]), -r[0]))
     cards = []
     for t, x, y, w, h in found:
@@ -488,7 +478,7 @@ def detect_card_regions(img):
 
 
 def selftest():
-    """Verify known crops + the 2026-10-02 table screenshot if present."""
+    """Проверка известных кропов и скрина стола, если он рядом."""
     _load_templates()
     fails = 0
     print('--- known crops ---')

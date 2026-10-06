@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify v3.3 SVG parser: UTF-8 suits, hero/board split, pot/bet."""
+"""Парсер svg: масти, свои карты и борд, банк и ставка."""
 import asyncio
 import base64
 from pathlib import Path

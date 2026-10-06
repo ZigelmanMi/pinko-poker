@@ -1,14 +1,3 @@
-// =====================================================================
-// test_dom_e2e.js — E2E-проверка парсера стола на мок-странице
-//
-// Запуск:  node test_dom_e2e.js
-//
-// Что здесь происходит: строится синтетический DOM, повторяющий разметку
-// игрового стола казино (места игроков, банк, ставка, карты с SVG-фонами),
-// и через НАСТОЯЩИЙ card_parser.js получается состояние стола. Это
-// единственная проверка, которая соединяет вместе парсер, определение
-// позиций и расчёт эквити — то есть весь путь «страница → совет».
-// =====================================================================
 'use strict';
 
 const fs = require('fs');
@@ -35,7 +24,6 @@ function eq(name, actual, expected) {
 
 const DIR = __dirname;
 
-// ------------------------------------------------------------------ мок-DOM
 function cardSvgUri(rank, suitSym) {
   const svg = '<svg xmlns="http://www.w3.org/2000/svg"><text>' + rank + suitSym + '</text></svg>';
   return 'data:image/svg+xml;base64,' + Buffer.from(svg, 'utf8').toString('base64');
@@ -101,7 +89,6 @@ function rect(x, y, w, h) {
   return { x, y, width: w, height: h, top: y, left: x, right: x + w, bottom: y + h };
 }
 
-// ------------------------------------------------------------------ сцена
 const VIEW_W = 1600;
 const VIEW_H = 900;
 
@@ -117,7 +104,7 @@ body.innerText = [
   'Ставки: $ 1 / $ 2'
 ].join('\n');
 
-// --- места игроков ---
+// места игроков
 function addSeat(name, cash, top, className) {
   const seat = makeElement('div', className || 'r-seat');
   const nameEl = makeElement('div', 'player-name', name);
@@ -138,7 +125,7 @@ const heroSeat = addSeat('HeroPlayer', '$ 150.00', 820, 'r-seat hero');
 const villainSeat = addSeat('VillainOne', '$ 190.00', 200, 'r-seat player-bar');
 addSeat('ThirdGuy', '$ 95.00', 380, 'r-seat player-box');
 
-// --- карты: фон-картинка с SVG data URI ---
+// карты: фон-картинка с SVG data URI
 function addCard(rank, suitSym, x, y) {
   const el = makeElement('div', 'r-card', '');
   el.style.backgroundImage = 'url("' + cardSvgUri(rank, suitSym) + '")';
@@ -159,7 +146,7 @@ const faceDown = makeElement('div', 'r-card card-back', '');
 body.appendChild(faceDown);
 RECTS.set(faceDown, rect(300, 200, 60, 84));
 
-// --- окружение ---
+// окружение
 const allElements = [];
 (function collect(el) {
   allElements.push(el);
@@ -282,7 +269,6 @@ vm.runInContext(fs.readFileSync(path.join(DIR, 'card_parser.js'), 'utf8'), sandb
 vm.runInContext(fs.readFileSync(path.join(DIR, 'hand_eval.js'), 'utf8'), sandbox, { filename: 'hand_eval.js' });
 vm.runInContext(fs.readFileSync(path.join(DIR, 'monte_carlo.js'), 'utf8'), sandbox, { filename: 'monte_carlo.js' });
 
-// ------------------------------------------------------------------ проверки
 console.log('\n1. Парсер карт загрузился');
 const ParserCore = sandbox.window.PokerCardParserCore;
 check('PokerCardParserCore доступен (это и был сломанный класс)', typeof ParserCore === 'function');
@@ -408,7 +394,6 @@ console.log('\n7. Экономия: мост отдал карты — скри�
   check('счётчик «без съёмки» увеличился', stats && stats.bridgeSkips > 0, JSON.stringify(stats));
 })();
 
-// ------------------------------------------------------------------ итог
 console.log('\n' + '='.repeat(58));
 console.log('Пройдено: ' + passed + ', провалено: ' + failed);
 if (failed) {

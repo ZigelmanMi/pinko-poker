@@ -1,20 +1,3 @@
-// =====================================================================
-// test_postflop_ranges.js — проверка постфлоп-модели диапазонов
-//
-// Запуск:  node test_postflop_ranges.js
-//
-// Что проверяем:
-//   1. разбор нотации диапазонов и целостность чартов (4 типа банка);
-//   2. эквити против ДИАПАЗОНА ниже, чем против случайной руки
-//      (главный смысл модуля);
-//   3. заведомо слабые/сильные руки на конкретных бордах;
-//   4. сужение диапазона по борду и агрессии реально меняет веса;
-//   5. решения getAction: FOLD / CHECK / CALL / RAISE, запрет CALL без
-//      ставки, сайзинги положительные и не больше эффективного стека;
-//   6. поведение без HandEval / MonteCarloSimulator (модуль понятно падает,
-//      а чистые функции диапазонов продолжают работать) — проверяется
-//      прогоном модуля в изолированном vm-контексте без зависимостей.
-// =====================================================================
 'use strict';
 
 const fs = require('fs');
@@ -79,7 +62,6 @@ function action(hole, board, overrides) {
   return PostflopRanges.getAction(input);
 }
 
-// ---------------------------------------------------------------- 1. диапазоны
 console.log('\n1. Разбор нотации и целостность диапазонов');
 
 eq('22+ = 13 пар', PostflopRanges.parseRange('22+').size, 13);
@@ -139,7 +121,6 @@ try { PostflopRanges.getRange('нет-такого'); } catch (e) { potTypeThrew
 try { equity('AhKd', 'As 7c 2d', 'нет-такого', 'bet'); } catch (e) { potTypeThrew++; }
 eq('неизвестный potType отвергается (2 случая)', potTypeThrew, 2);
 
-// ---------------------------------------------------------------- 2. эквити против диапазона
 console.log('\n2. Эквити против диапазона');
 
 const shape = equity('AhKd', 'As 7c 2d', 'srp_pfr', 'bet', 3000);
@@ -235,7 +216,6 @@ try { PostflopRanges.getEquity({ holeCards: C('AhKd'), board: [] }); } catch (e)
 try { PostflopRanges.getEquity({ holeCards: C('AhKd'), board: C('As Ah 7c') }); } catch (e) { inputThrew++; }
 eq('некорректный ввод отвергается (6 случаев)', inputThrew, 6);
 
-// ---------------------------------------------------------------- 3. решения getAction
 console.log('\n3. Решения getAction');
 
 const strong = action('7s7h', '7d Kc 2h', { potBB: 10, betToCallBB: 5 });
@@ -331,7 +311,6 @@ try { action('7d2c', 'As Ks Qs', { effectiveStackBB: 0 }); } catch (e) { actionI
 try { action('7d2c', 'As Ks Qs', { effectiveStackBB: -5 }); } catch (e) { actionInputThrew++; }
 eq('некорректный стек отвергается (2 случая)', actionInputThrew, 2);
 
-// ---------------------------------------------------------------- 4. сужение диапазона
 console.log('\n4. Сужение диапазона по борду и агрессии');
 
 const flushBoard = PostflopRanges.getWeightedRange({
@@ -378,7 +357,6 @@ check('взвешенный диапазон не пуст и ключи в 169-
   Object.keys(flushBoard.range).length > 30 && flushBoard.range.AKs > 0,
   'ключей: ' + Object.keys(flushBoard.range).length);
 
-// ---------------------------------------------------------------- 5. без зависимостей
 console.log('\n5. Поведение без HandEval / MonteCarloSimulator');
 
 const source = fs.readFileSync(path.join(__dirname, 'postflop_ranges.js'), 'utf8');
@@ -428,7 +406,6 @@ PostflopRanges.setSimulator(null);
 check('setSimulator(null) возвращает автоопределение',
   equity('AhKd', 'As 7c 2d', 'srp_pfr', 'bet', 3000).equity > 0);
 
-// ---------------------------------------------------------------- 6. браузерная загрузка
 console.log('\n6. Браузерная загрузка (self/root, без require)');
 
 const browserSandbox = {};
@@ -457,7 +434,6 @@ const browserAction = browserApi.getAction({
 eq('в браузерном контексте сет рейзит', browserAction.action, 'RAISE');
 eq('в браузерном контексте source тот же', browserAction.source, 'postflop_ranges');
 
-// ---------------------------------------------------------------- итог
 console.log('\n' + '='.repeat(58));
 console.log('Пройдено: ' + passed + ', провалено: ' + failed);
 if (failed) {

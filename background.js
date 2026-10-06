@@ -1,4 +1,4 @@
-// Service worker: разбор руки и связь со страницей.
+// Сервис-воркер: разбор руки и связь со страницей.
 
 // Порядок важен: hand_eval → monte_carlo → ranges, потому что оба модуля
 // диапазонов опционально используют симулятор и оценщик.
@@ -39,12 +39,10 @@ async function computeFrameHash(dataUrl) {
   }
 }
 
-// Domains hosting the poker game iframe
+// домены iframe стола
 const IFRAME_URL_PATTERNS = ['pu-web2.e5t.online', '.e5t.online'];
 
-// ===== AUTO-INJECTION (fallback if manifest content_scripts fail) =====
 
-// Hostnames where the poker game appears
 const GAME_FRAME_RE = /e5t\.online|pu-web2/i;
 
 function isHttpTab(url) {
@@ -185,10 +183,6 @@ function readWithPython(dataUrl) {
   });
 }
 
-// Inject assistant scripts into every frame when a casino page finishes loading.
-// Does not depend on manifest content_scripts — works even if they are blocked.
-// Retries with delays because game iframes can appear/navigate after page load.
-// Set a badge on the toolbar icon to show assistant status for a tab
 function setBadge(tabId, text, color) {
   try {
     if (chrome.action && chrome.action.setBadgeText) {
@@ -198,7 +192,7 @@ function setBadge(tabId, text, color) {
       chrome.action.setBadgeBackgroundColor({ tabId: tabId, color: color });
     }
   } catch (e) {
-    /* ignore badge errors */
+    /* бейдж не критичен */
   }
 }
 
@@ -232,9 +226,7 @@ chrome.webNavigation.onCompleted.addListener((details) => {
   }
 });
 
-// Manual trigger: clicking the extension icon grants activeTab access to the
-// current page — works even if the site access setting blocks host permissions.
-// Guarded: chrome.action may be undefined when the manifest has no "action" key.
+// клик по иконке даёт activeTab, даже если доступ к сайту выключен
 if (typeof chrome.action !== 'undefined' && chrome.action && chrome.action.onClicked) {
   chrome.action.onClicked.addListener((tab) => {
     console.log(`[PokerAssistant] Extension icon clicked on: ${tab && tab.url}`);
@@ -247,10 +239,9 @@ if (typeof chrome.action !== 'undefined' && chrome.action && chrome.action.onCli
   console.log('[PokerAssistant] chrome.action unavailable — icon click trigger disabled');
 }
 
-// ===== MESSAGING =====
 
 chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
-  // Content script requests injection into iframes
+  // контент-скрипт просит вставить скрипты во фреймы
   if (request.action === 'injectIntoIframes' && sender.tab) {
     console.log('[PokerAssistant] Received inject request from content script');
     injectIntoMatchingFrames(sender.tab.id).then(() => {
@@ -260,7 +251,7 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
       console.error('[PokerAssistant] Frame injection failed:', err);
       sendResponse({ injected: false, error: String((err && err.message) || err) });
     });
-    return true; // Keep message channel open for async
+    return true; // канал сообщения ещё нужен
   }
 
   if (request.action === 'captureTable') {
@@ -400,13 +391,8 @@ chrome.runtime.onMessage.addListener((request, sender, sendResponse) => {
   return true;
 });
 
-// ===== FRAME INJECTION =====
 
-/**
- * Inject assistant scripts into every frame of the tab.
- * Scripts self-guard against double initialization.
- * Content scripts from the manifest may already run — safe to re-inject.
- */
+// скрипты сами не стартуют второй раз, повторный inject не страшен
 async function injectIntoMatchingFrames(tabId) {
   let frames = [];
   try {
@@ -436,7 +422,6 @@ async function injectIntoMatchingFrames(tabId) {
   return ok;
 }
 
-// ===== HELPERS =====
 
 function detectStreet(handState) {
   const cc = (handState.communityCards || []).length;
@@ -470,7 +455,6 @@ function responseState(handState) {
   };
 }
 
-/** Convert money value to big blinds */
 function toBB(value, bigBlind) {
   const bb = Number(bigBlind) || 0;
   const v = Number(value) || 0;
@@ -478,7 +462,6 @@ function toBB(value, bigBlind) {
   return v;
 }
 
-/** Normalize two hole cards to hand key: "AKs", "AJo", "TT" */
 function normalizeHandCards(c1, c2) {
   if (!c1 || !c2 || !c1.rank || !c2.rank) return '';
   const rankOrder = ['2','3','4','5','6','7','8','9','T','J','Q','K','A'];
@@ -797,7 +780,6 @@ function buildPostflopRangeDecision(handState) {
   };
 }
 
-// ===== MAIN ANALYSIS =====
 
 /**
  * Решение только локальное: префлоп-чарты, постфлоп против диапазона,

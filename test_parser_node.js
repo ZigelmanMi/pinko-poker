@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Fast unit test of SVG decode + card parse (no browser).
+// разбор svg без браузера
 const fs = require('fs');
 const vm = require('vm');
 

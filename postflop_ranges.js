@@ -89,7 +89,6 @@
   // Разбор нотации диапазонов
   // Поддерживаем (как preflop_ranges.js):
   //   'AA' | 'TT+' | 'A2s+' | 'K9o+' | '22-99' | 'A2s-A5s' | 'T9s-54s'
-  // Формат выбран специально: строку видно глазами и правится руками.
 
   const TOKEN_PAIR = /^([2-9TJQKA])\1$/;
   const TOKEN_PAIR_PLUS = /^([2-9TJQKA])\1\+$/;
@@ -312,12 +311,7 @@
     return HandEval;
   }
 
-  /**
-   * Класс конкретного комбо на данном борде: категория готовой руки плюс
-   * флаги дро. Стрит-дро определяется честно и просто: если добавление
-   * ОДНОЙ недостающей карты даёт стрит — это стрит-дро (OESD и гатшот
-   * здесь не разделяются).
-   */
+  // категория руки и дро. стрит-дро — одна карта закрывает стрит, oesd и гатшот не делим.
   function classifyCombo(cards, board) {
     const he = requireHandEval();
     const cat = he.evaluateHand(cards, board).category;
@@ -457,12 +451,7 @@
   let autoSimulator = null;
   let simulatorDisabled = false;
 
-  /**
-   * setSimulator(sim):
-   *   sim — объект с computeWinRateVsRange (в т.ч. MonteCarloSimulator);
-   *   вызвать без аргументов или с null — вернуться к автоопределению;
-   *   false — намеренно отключить симулятор (диагностика/тесты).
-   */
+  // null — снова авто, false — без симулятора (тесты).
   function setSimulator(sim) {
     if (arguments.length === 0 || sim == null) {
       injectedSimulator = null;

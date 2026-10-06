@@ -11,8 +11,7 @@
   const DECK_SIZE = 52;
 
   // Код карты: (позиция ранка 0..12) * 4 + (позиция масти 0..3), то есть 0..51.
-  // Это ровно тот же порядок, что и в масках hand_eval.js, поэтому карты
-  // исключаются из колоды по единому индексу без конвертаций.
+  // тот же порядок мастей, что в hand_eval: один индекс на колоду.
   const cardRank = new Int32Array(DECK_SIZE);
   const cardSuit = new Int32Array(DECK_SIZE);
   for (let i = 0; i < DECK_SIZE; i++) {
@@ -375,17 +374,7 @@
       return { cum: cum, total: total, keys: keys };
     }
 
-    /**
-     * Эквити против диапазона соперника, не против случайных рук.
-     *
-     * @param {Array} holeCards карманные карты героя (2)
-     * @param {Array} communityCards борд (0/3/4/5)
-     * @param {{range:Object, opponents?:number, iterations?:number}} opts
-     *        range — объект { 'AKs': 1, 'QQ': 0.5, 'A5s': 0.25 } с весами
-     *        (вес = доля комбинаций данной руки, которая играется так)
-     * @returns {{equity:number, winRate:string, tieRate:string, loseRate:string,
-     *            iterations:number, combosInRange:number, rangePercent:number}}
-     */
+    // эквити против диапазона. range: { 'AKs': 1, 'QQ': 0.5 } — вес это доля комбо.
     computeWinRateVsRange(holeCards, communityCards, opts) {
       opts = opts || {};
       return this._computeWinRateInternal(holeCards, communityCards, {
