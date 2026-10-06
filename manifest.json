@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "pin-pok",
-  "version": "3.5.0",
+  "version": "3.5.1",
   "description": "Подсказки к Hold'em: карты, диапазоны и эквити",
   "permissions": [
     "activeTab",

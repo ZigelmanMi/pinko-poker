@@ -105,8 +105,13 @@ body.innerText = [
 ].join('\n');
 
 // места игроков
-function addSeat(name, cash, top, className) {
+function addSeat(name, cash, top, className, opts) {
+  opts = opts || {};
   const seat = makeElement('div', className || 'r-seat');
+  if (opts.innerText) {
+    seat.innerText = opts.innerText;
+    seat.textContent = opts.innerText;
+  }
   const nameEl = makeElement('div', 'player-name', name);
   nameEl.attrs.class = 'player-name';
   nameEl.setAttribute('class', 'player-name');
@@ -120,10 +125,28 @@ function addSeat(name, cash, top, className) {
   return { seat, nameEl, cashEl };
 }
 
+function addHoleBack(seat, x, y) {
+  const faceDown = makeElement('div', 'r-card card-back', '');
+  seat.appendChild(faceDown);
+  RECTS.set(faceDown, rect(x, y, 60, 84));
+  return faceDown;
+}
+
 // Герой — самое нижнее место на экране.
 const heroSeat = addSeat('HeroPlayer', '$ 150.00', 820, 'r-seat hero');
 const villainSeat = addSeat('VillainOne', '$ 190.00', 200, 'r-seat player-bar');
-addSeat('ThirdGuy', '$ 95.00', 380, 'r-seat player-box');
+const thirdSeat = addSeat('ThirdGuy', '$ 95.00', 380, 'r-seat player-box');
+// В раздаче у соперников видны рубашки; без них парсер раньше считал всех active.
+addHoleBack(villainSeat.seat, 520, 180);
+addHoleBack(villainSeat.seat, 550, 180);
+addHoleBack(thirdSeat.seat, 520, 360);
+addHoleBack(thirdSeat.seat, 550, 360);
+// Фолд: потухшее место без карт.
+addSeat('GraySeat', '$ 40.00', 500, 'r-seat is-fold player-bar');
+// Наблюдатель / отошёл.
+addSeat('IdleSeat', '$ 0.00', 100, 'r-seat player-bar', {
+  innerText: 'IdleSeat\nОтошел\nНет денег\n$ 0.00'
+});
 
 // карты: фон-картинка с SVG data URI
 function addCard(rank, suitSym, x, y) {
@@ -141,10 +164,6 @@ addCard('7', '♦', 780, 300);
 // Карманные карты героя внизу: 7♣ 7♠ — то есть сет семёрок.
 addCard('7', '♣', 730, 700);
 addCard('7', '♠', 800, 700);
-// Карты соперника не читаются (рубашкой вниз).
-const faceDown = makeElement('div', 'r-card card-back', '');
-body.appendChild(faceDown);
-RECTS.set(faceDown, rect(300, 200, 60, 84));
 
 // окружение
 const allElements = [];
@@ -291,7 +310,7 @@ eq('банк прочитан', state.pot, 12.5);
 eq('ставка к коллу прочитана', state.betToCall, 4);
 eq('большой блайнд прочитан', state.bigBlind, 2);
 eq('игроков в игре — 3', state.numPlayers, 3);
-eq('за столом — 3', state.numSeated, 3);
+eq('за столом — 5', state.numSeated, 5);
 eq('стек героя — 150', state.heroStack, 150);
 eq('имя героя прочитано', state.heroName, 'HeroPlayer');
 check('рубашка вниз не попала в карты', state.myCards.length === 2 && state.communityCards.length === 3);

@@ -255,37 +255,115 @@
 
   function findSeatRoot(el) {
     var n = el;
-    for (var i = 0; i < 10 && n && n !== document.body; i++) {
-      if (/r-seat|r-player|player-bar|player-box|player-info|seat-/i.test(classText(n))) return n;
+    var bar = null;
+    for (var i = 0; i < 12 && n && n !== document.body; i++) {
+      var cls = classText(n);
+      // Крупный контейнер места часто держит и бар, и рубашки рядом.
+      if (/r-seat|seat-wrapper|player-seat|player-container|r-player(?:$|[\s_-])/i.test(cls)) return n;
+      if (!bar && /player-bar|player-box|player-info|seat-/i.test(cls)) bar = n;
       n = n.parentElement;
     }
-    return el.parentElement || el;
+    return bar || el.parentElement || el;
+  }
+
+  function styleLooksFolded(st) {
+    if (!st) return false;
+    var op = parseFloat(st.opacity);
+    if (isFinite(op) && op > 0 && op < 0.78) return true;
+    if (st.visibility === 'hidden') return 'empty';
+    if (/grayscale\(|brightness\(\s*0?\.[0-6]/i.test(st.filter || '')) return true;
+    return false;
+  }
+
+  function seatLooksFaded(root) {
+    try {
+      var faded = styleLooksFolded(getComputedStyle(root));
+      if (faded === 'empty') return 'empty';
+      if (faded) return true;
+      var kids = root.children || [];
+      for (var i = 0; i < Math.min(kids.length, 10); i++) {
+        faded = styleLooksFolded(getComputedStyle(kids[i]));
+        if (faded === 'empty') return 'empty';
+        if (faded) return true;
+      }
+      // На Pinco прозрачность часто на родителе бара, а не на самом баре.
+      var up = root.parentElement;
+      for (var u = 0; u < 3 && up && up !== document.body; u++) {
+        faded = styleLooksFolded(getComputedStyle(up));
+        if (faded === 'empty') return 'empty';
+        if (faded) return true;
+        up = up.parentElement;
+      }
+    } catch (e) { /* ignore */ }
+    return false;
+  }
+
+  function holeCardsIn(root) {
+    try {
+      return root.querySelectorAll(
+        '.r-card, [class*="hole-card"], [class*="card-back"], [class*="close-card"], [class*="wrapper-close-card"]'
+      );
+    } catch (e) {
+      return [];
+    }
+  }
+
+  // Рубашки часто лежат рядом с баром, а не внутри него — ищем по координатам.
+  function nearbyHoleCardCount(root) {
+    var rect;
+    try { rect = root.getBoundingClientRect(); } catch (e) { return 0; }
+    if (!rect || !(rect.width > 0) || !(rect.height > 0)) return 0;
+    var cx = rect.left + rect.width / 2;
+    var cy = rect.top + rect.height / 2;
+    var cards;
+    try {
+      cards = document.querySelectorAll(
+        '.r-card, [class*="hole-card"], [class*="card-back"], [class*="close-card"], [class*="wrapper-close-card"]'
+      );
+    } catch (e2) { return 0; }
+    var n = 0;
+    for (var i = 0; i < cards.length; i++) {
+      var r;
+      try { r = cards[i].getBoundingClientRect(); } catch (e3) { continue; }
+      if (!r || r.width < 18 || r.height < 24) continue;
+      // Общий борд в центре стола не считаем карманными.
+      var midX = (typeof window !== 'undefined' && window.innerWidth) ? window.innerWidth * 0.5 : 800;
+      var midY = (typeof window !== 'undefined' && window.innerHeight) ? window.innerHeight * 0.42 : 380;
+      var boardDx = (r.left + r.width / 2) - midX;
+      var boardDy = (r.top + r.height / 2) - midY;
+      if (Math.abs(boardDx) < 220 && Math.abs(boardDy) < 110) continue;
+      var dx = (r.left + r.width / 2) - cx;
+      var dy = (r.top + r.height / 2) - cy;
+      if (Math.abs(dx) < 150 && Math.abs(dy) < 130) n++;
+    }
+    return n;
+  }
+
+  function seatHasHoleCards(root) {
+    var inside = holeCardsIn(root);
+    if (inside && inside.length >= 1) return true;
+    return nearbyHoleCardCount(root) >= 1;
   }
 
   function seatStatus(root, name) {
     if (isJunkPlayerName(name) || /не\s*занято|empty|vacant/i.test(name || '')) return 'empty';
     var blob = name || '';
     var node = root;
-    for (var i = 0; i < 5 && node && node !== document.body; i++) {
+    for (var i = 0; i < 6 && node && node !== document.body; i++) {
       blob += ' ' + classText(node);
       try { blob += ' ' + (node.getAttribute('data-status') || '') + ' ' + (node.getAttribute('data-state') || ''); } catch (e) { /* ignore */ }
+      try { blob += ' ' + String((node.innerText || node.textContent || '')).slice(0, 220); } catch (e2) { /* ignore */ }
       node = node.parentElement;
     }
-    try { blob += ' ' + String((root.innerText || '')).slice(0, 180); } catch (e2) { /* ignore */ }
-    if (/sit-?out|sitting.?out|отош[её]л|away|afk/i.test(blob)) return 'sitout';
+    if (/sit-?out|sitting.?out|отош[её]л|away|afk|нет\s*денег/i.test(blob)) return 'sitout';
     if (/(?:^|[\s_-])(?:fold|folded|is-fold|isFolded)(?:$|[\s_-])/i.test(blob) || /фолд|\bпас\b/i.test(blob)) return 'folded';
-    try {
-      var st = getComputedStyle(root);
-      var op = parseFloat(st.opacity);
-      if (isFinite(op) && op > 0 && op < 0.78) return 'folded';
-      var vis = st.visibility;
-      if (vis === 'hidden') return 'empty';
-      if (/grayscale\(|brightness\(\s*0?\.[0-6]/i.test(st.filter || '')) return 'folded';
-    } catch (e3) { /* ignore */ }
-    var cards = [];
-    try { cards = root.querySelectorAll('.r-card, [class*="hole-card"], [class*="card-back"], [class*="close-card"]'); } catch (e4) { cards = []; }
-    if (cards && cards.length >= 2) return 'active';
-    return 'active';
+    var faded = seatLooksFaded(root);
+    if (faded === 'empty') return 'empty';
+    if (faded) return 'folded';
+    if (seatHasHoleCards(root)) return 'active';
+    // Карт у места нет: сидит за столом, но про раздачу по DOM неясно
+    // (на canvas рубашки могут не быть в HTML).
+    return 'seated';
   }
 
   class PokerCardParserCore {
@@ -516,11 +594,20 @@
       var info = this.getPlayersInfo();
       var active = 0;
       var seated = 0;
+      var withCards = 0;
+      var inHand = 0;
       for (var i = 0; i < info.length; i++) {
         if (info[i].seated) seated++;
         if (info[i].active) active++;
+        if (info[i].hasCards) withCards++;
+        if (info[i].status === 'active' || info[i].status === 'seated') inHand++;
       }
-      if (active >= 1) return Math.max(2, Math.min(6, active));
+      // Карманные у нескольких мест — считаем только active (кто ещё в раздаче).
+      if (withCards >= 2) {
+        return Math.max(2, Math.min(6, active));
+      }
+      // Карт нет (Pixi/canvas): сидящие минус фолд и отошедшие.
+      if (inHand >= 2) return Math.min(6, inHand);
       if (seated >= 2) return Math.min(6, seated);
       return 2;
     }
@@ -557,19 +644,23 @@
         var betEl = bar ? bar.querySelector('[class*="player-bet"]') : null;
         var bet = betEl ? parseMoney(betEl.textContent) : 0;
         var status = seatStatus(bar || nameEl, name);
+        var hasCards = seatHasHoleCards(bar || nameEl);
         var seated = status !== 'empty';
         var active = status === 'active';
         players.push({
           name: name, cash: cash, bet: bet,
           x: rect.left, y: rect.top,
-          status: status, seated: seated, active: active
+          status: status, seated: seated, active: active, hasCards: hasCards
         });
       }
       if (players.length) {
         players.sort(function (a, b) { return b.y - a.y; });
         players[0].active = true;
         players[0].seated = true;
-        if (players[0].status === 'empty' || players[0].status === 'folded') players[0].status = 'active';
+        if (players[0].status === 'empty' || players[0].status === 'folded' ||
+            players[0].status === 'sitout' || players[0].status === 'seated') {
+          players[0].status = 'active';
+        }
       }
       return players;
     }
@@ -675,5 +766,5 @@
     inferSuitFromSvg: inferSuitFromSvg
   };
 
-  console.log('[PokerAssistant] Shared parser v3.5.0 loaded');
+  console.log('[PokerAssistant] Shared parser v3.5.1 loaded');
 })();

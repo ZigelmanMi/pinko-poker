@@ -8,7 +8,7 @@
 
   window.__pokerAssistantMainInit = true;
 
-  try { document.documentElement.setAttribute('data-pa-loaded', '3.5.0'); } catch (e) { /* ignore */ }
+  try { document.documentElement.setAttribute('data-pa-loaded', '3.5.1'); } catch (e) { /* ignore */ }
 
   var lastInject = 0;
   var lastShotAt = 0;

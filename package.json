@@ -1,6 +1,6 @@
 {
   "name": "pin-pok",
-  "version": "3.5.0",
+  "version": "3.5.1",
   "private": true,
   "description": "Подсказки к Hold'em на Pinco: локальное чтение карт, диапазоны и эквити",
   "scripts": {
